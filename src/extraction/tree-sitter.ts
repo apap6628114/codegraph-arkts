@@ -800,6 +800,9 @@ export class TreeSitterExtractor {
     // Extract inheritance (e.g. Swift: struct HTTPMethod: RawRepresentable)
     this.extractInheritance(node, structNode.id);
 
+    // Extract decorators applied to the struct (@Component, @Entry, @State)
+    this.extractDecoratorsFor(node, structNode.id);
+
     // Push to stack for field extraction
     this.nodeStack.push(structNode.id);
     for (let i = 0; i < body.namedChildCount; i++) {
@@ -1040,7 +1043,7 @@ export class TreeSitterExtractor {
 
     // Extract variable declarators based on language
     if (this.language === 'typescript' || this.language === 'javascript' ||
-        this.language === 'tsx' || this.language === 'jsx') {
+        this.language === 'tsx' || this.language === 'jsx' || this.language === 'arkts') {
       // Handle lexical_declaration and variable_declaration
       // These contain one or more variable_declarator children
       for (let i = 0; i < node.namedChildCount; i++) {
@@ -2081,7 +2084,7 @@ export class TreeSitterExtractor {
    * Languages that support type annotations (TypeScript, etc.)
    */
   private readonly TYPE_ANNOTATION_LANGUAGES = new Set([
-    'typescript', 'tsx', 'dart', 'kotlin', 'swift', 'rust', 'go', 'java', 'csharp',
+    'typescript', 'tsx', 'dart', 'kotlin', 'swift', 'rust', 'go', 'java', 'csharp', 'arkts',
   ]);
 
   /**

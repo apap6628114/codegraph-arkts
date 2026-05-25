@@ -72,6 +72,7 @@ export const LANGUAGES = [
   'go',
   'rust',
   'java',
+  'arkts',
   'c',
   'cpp',
   'csharp',

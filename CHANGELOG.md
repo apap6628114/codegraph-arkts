@@ -7,6 +7,17 @@ a [GitHub Release](https://github.com/colbymchenry/codegraph/releases) tagged
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [codegraph-arkts] - 2026-05-25
+
+### Added (fork)
+
+- **ArkTS language support** — Full extraction for HarmonyOS `.ets` files via `tree-sitter-arkts` WASM grammar. Adds `'arkts'` to the supported languages list and maps `.ets` file extension.
+- **ArkTS extractor** — `src/extraction/languages/arkts.ts` with ArkUI-specific AST node types: `struct_declaration` (with `@Component`/`@Entry` decorators), `arkui_component_expression` (call graph), `function_signature` body resolution for `export function`, `lazy_import_statement`, `accessibility_modifier` (public/private/protected).
+- **Decorator extraction** — `extractStruct` now emits `decorates` edges for `@`-prefixed decorators on structs, capturing framework annotations like `@State`, `@Link`, `@Prop`, `@Builder`, `@Styles`.
+- **Type annotation widening** — ArkTS added to the set of languages that support typed variable declarations and type annotation edges.
+- **WASM build script** — `scripts/build-wasm-arkts.sh` to rebuild the grammar WASM from a local `tree-sitter-arkts` source checkout.
+- **`better-sqlite3` fallback** — SQLite adapter now falls back to `better-sqlite3` when `node:sqlite` is available but lacks the FTS5 extension (notably some Windows Node distributions).
+
 ## [0.9.4] - 2026-05-24
 
 ### Added

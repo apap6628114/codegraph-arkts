@@ -3900,3 +3900,347 @@ local count = 0
     });
   });
 });
+// =============================================================================
+// ArkTS (HarmonyOS — https://gitee.com/harmonyos/arkts)
+// =============================================================================
+
+describe('ArkTS Extraction', () => {
+  describe('Language detection', () => {
+    it('should detect ArkTS files', () => {
+      expect(detectLanguage('component.ets')).toBe('arkts');
+      expect(detectLanguage('src/pages/Index.ets')).toBe('arkts');
+    });
+
+    it('should report ArkTS as supported', () => {
+      expect(isLanguageSupported('arkts')).toBe(true);
+      expect(getSupportedLanguages()).toContain('arkts');
+    });
+  });
+
+  describe('Struct declarations with decorators', () => {
+    it('should extract @Component struct', () => {
+      const code = `
+@Entry
+@Component
+struct MyComponent {
+  build() {
+    Column() { }
+  }
+}
+`;
+      const result = extractFromSource('MyComponent.ets', code);
+
+      const structNode = result.nodes.find((n) => n.kind === 'struct');
+      expect(structNode).toBeDefined();
+      expect(structNode?.name).toBe('MyComponent');
+      expect(structNode?.language).toBe('arkts');
+
+      const methodNode = result.nodes.find((n) => n.kind === 'method' && n.name === 'build');
+      expect(methodNode).toBeDefined();
+      expect(methodNode?.qualifiedName).toBe('MyComponent::build');
+    });
+
+    it('should extract decorator references', () => {
+      const code = `
+@Entry
+@Component
+struct Index {
+  build() { }
+}
+`;
+      const result = extractFromSource('Index.ets', code);
+
+      const decoratorRefs = result.unresolvedReferences.filter(
+        (r) => r.referenceKind === 'decorates'
+      );
+      expect(decoratorRefs.length).toBeGreaterThanOrEqual(2);
+      const decoratorNames = decoratorRefs.map((r) => r.referenceName);
+      expect(decoratorNames).toContain('Entry');
+      expect(decoratorNames).toContain('Component');
+    });
+  });
+
+  describe('Function declarations', () => {
+    it('should extract function declarations', () => {
+      const code = `
+function formatDate(date: Date): string {
+  return date.toISOString();
+}
+`;
+      const result = extractFromSource('utils.ets', code);
+
+      const funcNode = result.nodes.find((n) => n.kind === 'function');
+      expect(funcNode).toBeDefined();
+      expect(funcNode?.name).toBe('formatDate');
+      expect(funcNode?.signature).toContain('date: Date');
+    });
+
+    it('should extract exported functions', () => {
+      const code = `
+export function calculateTotal(items: Item[]): number {
+  return items.reduce((sum, i) => sum + i.price, 0);
+}
+`;
+      const result = extractFromSource('calc.ets', code);
+
+      const funcNode = result.nodes.find((n) => n.kind === 'function');
+      expect(funcNode).toBeDefined();
+      expect(funcNode?.name).toBe('calculateTotal');
+      expect(funcNode?.isExported).toBe(true);
+    });
+  });
+
+  describe('Interface declarations', () => {
+    it('should extract interfaces', () => {
+      const code = `
+interface UserData {
+  id: string;
+  name: string;
+  email: string;
+}
+`;
+      const result = extractFromSource('types.ets', code);
+
+      const ifaceNode = result.nodes.find((n) => n.kind === 'interface');
+      expect(ifaceNode).toBeDefined();
+      expect(ifaceNode?.name).toBe('UserData');
+    });
+  });
+
+  describe('Enum declarations', () => {
+    it('should extract enums', () => {
+      const code = `
+enum Status { Active, Inactive, Pending }
+`;
+      const result = extractFromSource('enums.ets', code);
+
+      const enumNode = result.nodes.find((n) => n.kind === 'enum');
+      expect(enumNode).toBeDefined();
+      expect(enumNode?.name).toBe('Status');
+    });
+  });
+
+  describe('Type alias declarations', () => {
+    it('should extract type aliases', () => {
+      const code = `
+type Callback = (value: string) => void;
+`;
+      const result = extractFromSource('types.ets', code);
+
+      const aliasNode = result.nodes.find((n) => n.kind === 'type_alias');
+      expect(aliasNode).toBeDefined();
+      expect(aliasNode?.name).toBe('Callback');
+    });
+  });
+
+  describe('Import extraction', () => {
+    it('should extract regular imports', () => {
+      const code = `import { router } from '@kit.AbilityKit';`;
+      const result = extractFromSource('app.ets', code);
+
+      const importNode = result.nodes.find((n) => n.kind === 'import');
+      expect(importNode).toBeDefined();
+      expect(importNode?.name).toBe('@kit.AbilityKit');
+      expect(importNode?.signature).toContain('router');
+    });
+
+    it('should extract import lazy', () => {
+      const code = `import lazy { CustomComponent } from './CustomComponent';`;
+      const result = extractFromSource('app.ets', code);
+
+      const importNode = result.nodes.find((n) => n.kind === 'import');
+      expect(importNode).toBeDefined();
+      expect(importNode?.name).toBe('./CustomComponent');
+      expect(importNode?.signature).toContain('lazy');
+    });
+
+    it('should extract multiple imports', () => {
+      const code = `
+import { router } from '@kit.AbilityKit';
+import lazy { HeavyComponent } from './HeavyComponent';
+import { logger } from '../utils/log';
+`;
+      const result = extractFromSource('app.ets', code);
+
+      const importNodes = result.nodes.filter((n) => n.kind === 'import');
+      expect(importNodes.length).toBe(3);
+      const names = importNodes.map((n) => n.name);
+      expect(names).toContain('@kit.AbilityKit');
+      expect(names).toContain('./HeavyComponent');
+      expect(names).toContain('../utils/log');
+    });
+  });
+
+  describe('Call extraction', () => {
+    it('should extract regular function calls', () => {
+      const code = `
+function handleTap() {
+  router.pushUrl({ url: 'pages/Detail' });
+}
+`;
+      const result = extractFromSource('handler.ets', code);
+
+      const callRef = result.unresolvedReferences.find(
+        (r) => r.referenceKind === 'calls' && r.referenceName === 'router.pushUrl'
+      );
+      expect(callRef).toBeDefined();
+    });
+
+    it('should extract ArkUI component expressions', () => {
+      const code = `
+@Entry
+@Component
+struct Index {
+  build() {
+    Column() {
+      Text("Hello")
+        .fontSize(20)
+      Button("Click Me")
+        .onClick(() => { })
+    }
+  }
+}
+`;
+      const result = extractFromSource('Index.ets', code);
+
+      const methodNode = result.nodes.find((n) => n.kind === 'method' && n.name === 'build');
+      expect(methodNode).toBeDefined();
+
+      const callRefs = result.unresolvedReferences.filter(
+        (r) => r.referenceKind === 'calls'
+      );
+      const callNames = callRefs.map((r) => r.referenceName);
+      expect(callNames).toContain('Column');
+      expect(callNames).toContain('Text');
+      expect(callNames).toContain('Button');
+    });
+  });
+
+  describe('Variable extraction', () => {
+    it('should extract const declarations', () => {
+      const code = `
+const MAX_COUNT = 100;
+const API_BASE = 'https://api.example.com';
+`;
+      const result = extractFromSource('constants.ets', code);
+
+      const variables = result.nodes.filter((n) => n.kind === 'constant');
+      expect(variables.length).toBe(2);
+      expect(variables.map((v) => v.name).sort()).toEqual(['API_BASE', 'MAX_COUNT']);
+    });
+  });
+
+  describe('Visibility modifiers', () => {
+    it('should extract visibility modifiers', () => {
+      const code = `
+class Logger {
+  public info(msg: string): void { }
+  private debug(msg: string): void { }
+  protected warn(msg: string): void { }
+}
+`;
+      const result = extractFromSource('Logger.ets', code);
+
+      const methods = result.nodes.filter((n) => n.kind === 'method');
+      const info = methods.find((m) => m.name === 'info');
+      expect(info?.visibility).toBe('public');
+
+      const debug = methods.find((m) => m.name === 'debug');
+      expect(debug?.visibility).toBe('private');
+
+      const warn = methods.find((m) => m.name === 'warn');
+      expect(warn?.visibility).toBe('protected');
+    });
+  });
+
+  describe('Full fixture: todo list component', () => {
+    const code = `
+import { router } from '@kit.AbilityKit';
+import { logger } from '../utils/log';
+
+@Entry
+@Component
+struct TodoList {
+  @State private tasks: string[] = [];
+  @State private newTask: string = '';
+
+  aboutToAppear() {
+    this.loadTasks();
+  }
+
+  build() {
+    Column() {
+      TextInput({ placeholder: 'Add a task' })
+        .onChange((value: string) => {
+          this.newTask = value;
+        })
+      Button('Add')
+        .onClick(() => {
+          this.addTask();
+        })
+      ForEach(this.tasks, (task: string) => {
+        Text(task)
+      })
+    }
+    .padding(20)
+  }
+
+  private addTask(): void {
+    if (this.newTask.length > 0) {
+      this.tasks.push(this.newTask);
+      this.newTask = '';
+    }
+  }
+
+  private loadTasks(): void {
+    logger.info('loading tasks');
+  }
+}
+`;
+    it('should extract all expected nodes with no errors', () => {
+      const result = extractFromSource('TodoList.ets', code);
+
+      expect(result.errors).toHaveLength(0);
+
+      const fileNode = result.nodes.find((n) => n.kind === 'file');
+      expect(fileNode?.name).toBe('TodoList.ets');
+
+      const structNode = result.nodes.find((n) => n.kind === 'struct');
+      expect(structNode?.name).toBe('TodoList');
+
+      const decoratorRefs = result.unresolvedReferences.filter(
+        (r) => r.referenceKind === 'decorates'
+      );
+      expect(decoratorRefs.map((r) => r.referenceName)).toContain('Entry');
+      expect(decoratorRefs.map((r) => r.referenceName)).toContain('Component');
+      expect(decoratorRefs.map((r) => r.referenceName)).toContain('State');
+
+      const methods = result.nodes.filter((n) => n.kind === 'method');
+      expect(methods.length).toBeGreaterThanOrEqual(3);
+      expect(methods.map((m) => m.name)).toContain('build');
+      expect(methods.map((m) => m.name)).toContain('addTask');
+      expect(methods.map((m) => m.name)).toContain('loadTasks');
+
+      const imports = result.nodes.filter((n) => n.kind === 'import');
+      expect(imports.length).toBe(2);
+
+      const callRefs = result.unresolvedReferences.filter(
+        (r) => r.referenceKind === 'calls'
+      );
+      const callNames = callRefs.map((r) => r.referenceName);
+      expect(callNames).toContain('Column');
+      expect(callNames).toContain('TextInput');
+      expect(callNames).toContain('Button');
+      expect(callNames).toContain('ForEach');
+      expect(callNames).toContain('Text');
+    });
+
+    it('should contain struct body spanning methods', () => {
+      const result = extractFromSource('TodoList.ets', code);
+
+      const buildMethod = result.nodes.find((n) => n.kind === 'method' && n.name === 'build');
+      expect(buildMethod).toBeDefined();
+      expect(buildMethod!.endLine).toBeGreaterThan(buildMethod!.startLine);
+    });
+  });
+});

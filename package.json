@@ -1,7 +1,7 @@
 {
-  "name": "@colbymchenry/codegraph",
-  "version": "0.9.4",
-  "description": "Supercharge Claude Code with semantic code intelligence. 94% fewer tool calls • 77% faster exploration • 100% local.",
+  "name": "codegraph-arkts",
+  "version": "0.9.4-arkts.1",
+  "description": "CodeGraph fork with ArkTS/HarmonyOS support — semantic code intelligence for Claude Code, Cursor, Codex CLI.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -22,17 +22,21 @@
     "test:watch": "vitest",
     "test:eval": "vitest run __tests__/evaluation/",
     "eval": "npm run build && npx tsx __tests__/evaluation/runner.ts",
+    "build:wasm-arkts": "bash scripts/build-wasm-arkts.sh",
     "clean": "node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true})\""
   },
   "keywords": [
     "code-intelligence",
     "knowledge-graph",
-    "static-analysis"
+    "static-analysis",
+    "arkts",
+    "harmonyos"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.3.0",
+    "better-sqlite3": "^12.10.0",
     "commander": "^14.0.2",
     "fast-string-width": "^3.0.2",
     "fast-wrap-ansi": "^0.2.0",

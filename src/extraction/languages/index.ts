@@ -25,10 +25,12 @@ import { pascalExtractor } from './pascal';
 import { scalaExtractor } from './scala';
 import { luaExtractor } from './lua';
 import { luauExtractor } from './luau';
+import { arktsExtractor } from './arkts';
 
 export const EXTRACTORS: Partial<Record<Language, LanguageExtractor>> = {
   typescript: typescriptExtractor,
   tsx: typescriptExtractor,
+  arkts: arktsExtractor,
   javascript: javascriptExtractor,
   jsx: javascriptExtractor,
   python: pythonExtractor,
