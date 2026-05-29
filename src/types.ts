@@ -88,8 +88,11 @@ export const LANGUAGES = [
   'scala',
   'lua',
   'luau',
+  'objc',
   'yaml',
   'twig',
+  'xml',
+  'properties',
   'unknown',
 ] as const;
 

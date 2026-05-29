@@ -46,7 +46,7 @@ import {
 import { GraphTraverser, GraphQueryManager } from './graph';
 import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock } from './utils';
-import { FileWatcher, WatchOptions } from './sync';
+import { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './sync';
 
 // Re-export types for consumers
 export * from './types';
@@ -75,7 +75,7 @@ export {
   defaultLogger,
 } from './errors';
 export { Mutex, FileLock, processInBatches, debounce, throttle, MemoryMonitor } from './utils';
-export { FileWatcher, WatchOptions } from './sync';
+export { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './sync';
 export { MCPServer } from './mcp';
 
 /**
@@ -325,7 +325,22 @@ export class CodeGraph {
         return { success: false, filesIndexed: 0, filesSkipped: 0, filesErrored: 0, nodesCreated: 0, edgesCreated: 0, errors: [{ message: 'Could not acquire file lock - another process may be indexing', severity: 'error' as const }], durationMs: 0 };
       }
       try {
+        const before = this.queries.getNodeAndEdgeCount();
         const result = await this.orchestrator.indexAll(options.onProgress, options.signal, options.verbose);
+
+        // Re-detect frameworks now that the index is populated. The resolver
+        // is constructed with createResolver() before any files exist, so
+        // framework resolvers whose detect() consults the indexed file list
+        // (e.g. UIKit/SwiftUI scanning for imports, swift-objc-bridge looking
+        // for both Swift and ObjC files) all return false on that initial pass
+        // and silently drop themselves. Re-initializing here gives them a
+        // chance to see the actual project before resolution runs.
+        if (result.success && result.filesIndexed > 0) {
+          this.resolver.initialize();
+          // Cross-file finalization (e.g. NestJS RouterModule prefixes). Runs
+          // before resolution so updated names show up in subsequent reads.
+          this.resolver.runPostExtract();
+        }
 
         // Resolve references to create call/import/extends edges
         if (result.success && result.filesIndexed > 0) {
@@ -351,6 +366,15 @@ export class CodeGraph {
         // Cheap and non-blocking; never load-bearing for correctness.
         if (result.success && result.filesIndexed > 0) {
           this.db.runMaintenance();
+        }
+
+        // The orchestrator only sees extraction-phase counts; resolution and
+        // synthesizer edges (often >50% of the graph on JVM repos) come later.
+        // Recompute against the DB so the CLI summary reports the true totals.
+        if (result.success && result.filesIndexed > 0) {
+          const after = this.queries.getNodeAndEdgeCount();
+          result.nodesCreated = after.nodes - before.nodes;
+          result.edgesCreated = after.edges - before.edges;
         }
 
         return result;
@@ -394,6 +418,14 @@ export class CodeGraph {
       }
       try {
         const result = await this.orchestrator.sync(options.onProgress);
+
+        // Cross-file finalization (e.g. NestJS RouterModule prefixes). Run on
+        // every sync that touched files so edits to `app.module.ts` propagate
+        // to controllers in unchanged files. The pass is idempotent and cheap
+        // (regex over *.module.ts only).
+        if (result.filesAdded > 0 || result.filesModified > 0) {
+          this.resolver.runPostExtract();
+        }
 
         // Resolve references if files were updated
         if (result.filesAdded > 0 || result.filesModified > 0) {
@@ -473,6 +505,14 @@ export class CodeGraph {
       this.projectRoot,
       async () => {
         const result = await this.sync();
+        // sync() returns this exact zero-shape iff it failed to acquire the
+        // file lock (a real empty sync always has filesChecked > 0 because
+        // scanDirectory ran). Surface that to the watcher as a typed error
+        // so it keeps pendingFiles + reschedules instead of clearing them
+        // (#449).
+        if (result.filesChecked === 0 && result.durationMs === 0) {
+          throw new LockUnavailableError();
+        }
         const filesChanged = result.filesAdded + result.filesModified + result.filesRemoved;
         return { filesChanged, durationMs: result.durationMs };
       },
@@ -497,6 +537,31 @@ export class CodeGraph {
    */
   isWatching(): boolean {
     return this.watcher?.isActive() ?? false;
+  }
+
+  /**
+   * Files seen by the file watcher since the last successful sync —
+   * the per-file "stale" signal MCP tools attach to responses so an agent
+   * can fall back to {@link Read} for just the affected file without
+   * waiting for a debounced sync to complete (issue #403).
+   *
+   * Returns an empty list when the watcher isn't active, or no events have
+   * arrived. Each entry includes `firstSeenMs` and `lastSeenMs` (wall-clock
+   * `Date.now()` values) so callers can render "edited Nms ago", plus an
+   * `indexing` flag indicating whether the in-flight sync (if any) will
+   * absorb that file.
+   */
+  getPendingFiles(): PendingFile[] {
+    return this.watcher?.getPendingFiles() ?? [];
+  }
+
+  /**
+   * Resolves once the file watcher has finished its initial chokidar scan.
+   * Useful for tests that need a deterministic boundary before asserting on
+   * `getPendingFiles()`. Resolves immediately when no watcher is active.
+   */
+  waitUntilWatcherReady(timeoutMs?: number): Promise<void> {
+    return this.watcher ? this.watcher.waitUntilReady(timeoutMs) : Promise.resolve();
   }
 
   /**
@@ -616,6 +681,33 @@ export class CodeGraph {
    */
   searchNodes(query: string, options?: SearchOptions): SearchResult[] {
     return this.queries.searchNodes(query, options);
+  }
+
+  /**
+   * Find the project's "primary route file" — the file with the densest
+   * concentration of framework-emitted `route` nodes (≥3 routes, ≥30%
+   * of all non-test routes). Used to inline the routing config in
+   * `codegraph_context` responses on small realworld template repos
+   * (rails-realworld, laravel-realworld, drupal-admintoolbar, …) where
+   * Glob+Read of `routes.rb`/`urls.py`/etc. otherwise beats codegraph.
+   */
+  getTopRouteFile(): { filePath: string; routeCount: number; totalRoutes: number } | null {
+    return this.queries.getTopRouteFile();
+  }
+
+  /**
+   * Build a URL → handler routing manifest from the index. Each entry
+   * pairs a route node (URL + method) with its handler function/method
+   * via the `references` edge that framework resolvers emit. Returns
+   * null when fewer than 3 valid (non-test) routes exist.
+   */
+  getRoutingManifest(limit?: number): {
+    entries: Array<{ url: string; handler: string; handlerFile: string; handlerLine: number; handlerKind: string }>;
+    topHandlerFile: string | null;
+    topHandlerFileCount: number;
+    totalRoutes: number;
+  } | null {
+    return this.queries.getRoutingManifest(limit);
   }
 
   // ===========================================================================
