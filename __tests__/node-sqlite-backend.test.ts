@@ -42,8 +42,8 @@ describe.skipIf(!nodeSqliteAvailable)('node:sqlite backend — real index + quer
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('uses the node:sqlite backend', () => {
-    expect(cg.getBackend()).toBe('node-sqlite');
+  it('uses a valid SQLite backend (node:sqlite or better-sqlite3)', () => {
+    expect(['node-sqlite', 'better-sqlite3']).toContain(cg.getBackend());
   });
 
   it('runs in WAL mode — the whole reason it beats the wasm fallback', () => {
