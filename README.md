@@ -122,6 +122,10 @@ node dist/bin/codegraph.js install --location=local --yes
 
 每种语言都有一个 `LanguageExtractor` 配置对象，将 tree-sitter AST 节点类型映射到语义概念：
 
+CodeGraph can be embedded directly. The npm package re-exports its programmatic
+API, so both `import` and `require` resolve the `CodeGraph` class in your own
+process — handy for embedding it in an app (e.g. an Electron main process).
+
 ```typescript
 export const arktsExtractor: LanguageExtractor = {
   functionTypes: ['function_declaration', 'function_signature', 'arrow_function', ...],
@@ -133,6 +137,45 @@ export const arktsExtractor: LanguageExtractor = {
 ```
 
 语言特定的钩子（`visitNode`、`resolveBody`、`extractImport`）处理 ArkTS 的 AST 特殊之处，如 `export function` 中 `function_signature`/函数体的分离。
+
+```typescript
+import CodeGraph from '@colbymchenry/codegraph';
+// CommonJS works too:
+//   const { CodeGraph } = require('@colbymchenry/codegraph');
+
+const cg = await CodeGraph.init('/path/to/project');
+// Or: const cg = await CodeGraph.open('/path/to/project');
+
+await cg.indexAll({
+  onProgress: (p) => console.log(`${p.phase}: ${p.current}/${p.total}`)
+});
+
+const results = cg.searchNodes('UserService');
+const callers = cg.getCallers(results[0].node.id);
+const context = await cg.buildContext('fix login bug', { maxNodes: 20, includeCode: true, format: 'markdown' });
+const impact = cg.getImpactRadius(results[0].node.id, 2);
+
+cg.watch();   // auto-sync on file changes
+cg.unwatch(); // stop watching
+cg.close();
+```
+
+Lower-level building blocks are exported from the same entry point for callers
+that drive the graph directly: `DatabaseConnection`, `QueryBuilder`,
+`getDatabasePath`, `initGrammars` / `loadGrammarsForLanguages`, and `FileLock`.
+
+**Embedding requirements**
+
+- Install from npm (`npm i @colbymchenry/codegraph`) so the matching
+  per-platform package — which carries the compiled library and its
+  dependencies — is fetched alongside the shim.
+- The API runs on **your** runtime, so it needs **Node 22.5+** for the built-in
+  `node:sqlite` (Electron qualifies when its bundled Node is 22.5+). The CLI and
+  MCP server are unaffected — they run on the self-contained bundled runtime.
+- TypeScript types ship with the package. As with any Node-targeting library,
+  keep `@types/node` available and `skipLibCheck: true` (the common default).
+
+---
 
 ## 项目结构
 

@@ -1,6 +1,6 @@
 {
   "name": "codegraph-arkts",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "description": "CodeGraph fork with ArkTS/HarmonyOS support — semantic code intelligence for Claude Code, Cursor, Codex CLI.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run copy-assets && node -e \"require('fs').chmodSync('dist/bin/codegraph.js', 0o755)\"",
+    "build:wasm-arkts": "bash scripts/build-wasm-arkts.sh",
     "preuninstall": "node dist/bin/uninstall.js",
     "copy-assets": "node -e \"const fs=require('fs');fs.mkdirSync('dist/db',{recursive:true});fs.copyFileSync('src/db/schema.sql','dist/db/schema.sql');fs.mkdirSync('dist/extraction/wasm',{recursive:true});fs.readdirSync('src/extraction/wasm').filter(f=>f.endsWith('.wasm')).forEach(f=>fs.copyFileSync('src/extraction/wasm/'+f,'dist/extraction/wasm/'+f))\"",
     "dev": "tsc --watch",
@@ -22,7 +23,6 @@
     "test:watch": "vitest",
     "test:eval": "vitest run __tests__/evaluation/",
     "eval": "npm run build && npx tsx __tests__/evaluation/runner.ts",
-    "build:wasm-arkts": "bash scripts/build-wasm-arkts.sh",
     "clean": "node -e \"const fs=require('fs');fs.rmSync('dist',{recursive:true,force:true})\""
   },
   "keywords": [
@@ -36,7 +36,6 @@
   "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.3.0",
-    "better-sqlite3": "^12.10.0",
     "chokidar": "^4.0.3",
     "commander": "^14.0.2",
     "fast-string-width": "^3.0.2",
