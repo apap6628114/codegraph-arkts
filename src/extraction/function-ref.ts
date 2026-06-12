@@ -381,6 +381,7 @@ export const FN_REF_SPECS: Record<string, FnRefSpec | undefined> = {
   tsx: TS_JS_SPEC,
   javascript: TS_JS_SPEC,
   jsx: TS_JS_SPEC,
+  arkts: TS_JS_SPEC,
   python: PYTHON_SPEC,
   go: GO_SPEC,
   rust: RUST_SPEC,

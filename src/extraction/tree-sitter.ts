@@ -727,7 +727,8 @@ export class TreeSitterExtractor {
     else if (
       nodeType === 'export_statement' &&
       (this.language === 'typescript' || this.language === 'tsx' ||
-       this.language === 'javascript' || this.language === 'jsx') &&
+       this.language === 'javascript' || this.language === 'jsx' ||
+       this.language === 'arkts') &&
       getChildByField(node, 'source')
     ) {
       const parentId = this.nodeStack[this.nodeStack.length - 1];
