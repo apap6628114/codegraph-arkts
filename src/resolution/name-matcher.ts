@@ -113,7 +113,7 @@ function pickClosestFileNode(candidates: Node[], ref: UnresolvedRef): Node {
 const LANGUAGE_FAMILY: Record<string, string> = {
   java: 'jvm', kotlin: 'jvm', scala: 'jvm',
   swift: 'apple', objc: 'apple',
-  typescript: 'web', tsx: 'web', javascript: 'web', jsx: 'web',
+  typescript: 'web', tsx: 'web', javascript: 'web', jsx: 'web', arkts: 'web',
   c: 'c', cpp: 'c',
   // Razor/Blazor markup names C# types — same family so `@model Foo` /
   // `<MyComponent/>` resolve to their `.cs` class through the cross-family gate.
@@ -199,6 +199,7 @@ export function matchFunctionRef(
   const bareFnOnly =
     ref.language === 'typescript' || ref.language === 'tsx' ||
     ref.language === 'javascript' || ref.language === 'jsx' ||
+    ref.language === 'arkts' ||
     ref.language === 'cpp' || ref.language === 'python' ||
     ref.language === 'php';
 

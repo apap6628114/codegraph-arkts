@@ -1920,7 +1920,7 @@ export class TreeSitterExtractor {
         // property/method nodes under the type alias so `recorder.stop()`
         // can attach the call edge to `RecorderHandle.stop` instead of
         // an unrelated class method picked by path-proximity (#359).
-        if (this.language === 'typescript' || this.language === 'tsx') {
+        if (this.language === 'typescript' || this.language === 'tsx' || this.language === 'arkts') {
           this.extractTsTypeAliasMembers(value, typeAliasNode);
           // `type List = [ Service<'name', Req, Resp>, … ]` — surface each
           // entry's string-literal name as a searchable member (issue #634).

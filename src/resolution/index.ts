@@ -1023,7 +1023,7 @@ export class ReferenceResolver {
   private isBuiltInOrExternal(ref: UnresolvedRef): boolean {
     const name = ref.referenceName;
     const isJsTs = ref.language === 'typescript' || ref.language === 'javascript'
-      || ref.language === 'tsx' || ref.language === 'jsx';
+      || ref.language === 'tsx' || ref.language === 'jsx' || ref.language === 'arkts';
 
     // JavaScript/TypeScript built-ins
     if (isJsTs && JS_BUILT_INS.has(name)) {

@@ -118,6 +118,8 @@ const DEFAULT_IGNORE_DIRS: ReadonlySet<string> = new Set([
   // JS / TS — dependency directories
   'node_modules', 'bower_components', 'jspm_packages', 'web_modules',
   '.yarn', '.pnpm-store',
+  // HarmonyOS — dependency directories
+  'oh_modules', '.hvigor',
   // JS / TS — framework & bundler build / cache / deploy output
   '.next', '.nuxt', '.svelte-kit', '.turbo', '.vite', '.parcel-cache', '.angular',
   '.docusaurus', 'storybook-static', '.vinxi', '.nitro', 'out-tsc',
