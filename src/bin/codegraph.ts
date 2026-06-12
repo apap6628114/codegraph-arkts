@@ -20,6 +20,7 @@
  *   codegraph callees <symbol>   Find what a function/method calls
  *   codegraph impact <symbol>    Analyze what code is affected by changing a symbol
  *   codegraph affected [files]   Find test files affected by changes
+ *   codegraph upgrade [version]  Update CodeGraph to the latest release
  */
 
 import { Command } from 'commander';
@@ -32,6 +33,7 @@ import { getGlyphs } from '../ui/glyphs';
 
 import { buildNode25BlockBanner, buildNodeTooOldBanner, MIN_NODE_MAJOR } from './node-version-check';
 import { relaunchWithWasmRuntimeFlagsIfNeeded } from '../extraction/wasm-runtime-flags';
+import { EXTRACTION_VERSION } from '../extraction/extraction-version';
 
 // Lazy-load heavy modules (CodeGraph, runInstaller) to keep CLI startup fast.
 async function loadCodeGraph(): Promise<typeof import('../index')> {
@@ -354,7 +356,7 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
       clack.log.info(`The index is fully usable ${getGlyphs().dash} only the failed files are missing.`);
     }
   } else if (projectPath) {
-    const logPath = path.join(projectPath, '.codegraph', 'errors.log');
+    const logPath = path.join(getCodeGraphDir(projectPath), 'errors.log');
     if (fs.existsSync(logPath)) {
       fs.unlinkSync(logPath);
     }
@@ -365,7 +367,7 @@ function printIndexResult(clack: typeof import('@clack/prompts'), result: IndexR
  * Write detailed error log to .codegraph/errors.log
  */
 function writeErrorLog(projectPath: string, errors: Array<{ message: string; filePath?: string; severity: string; code?: string }>): void {
-  const cgDir = path.join(projectPath, '.codegraph');
+  const cgDir = getCodeGraphDir(projectPath);
   if (!fs.existsSync(cgDir)) return;
 
   const logPath = path.join(cgDir, 'errors.log');
@@ -699,6 +701,9 @@ program
       const backend = cg.getBackend();
       const journalMode = cg.getJournalMode();
 
+      const buildInfo = cg.getIndexBuildInfo();
+      const reindexRecommended = cg.isIndexStale();
+
       // JSON output mode
       if (options.json) {
         const lastIndexedMs = cg.getLastIndexedAt();
@@ -724,6 +729,12 @@ program
           worktreeMismatch: worktreeMismatch
             ? { worktreeRoot: worktreeMismatch.worktreeRoot, indexRoot: worktreeMismatch.indexRoot }
             : null,
+          index: {
+            builtWithVersion: buildInfo.version,
+            builtWithExtractionVersion: buildInfo.extractionVersion,
+            currentExtractionVersion: EXTRACTION_VERSION,
+            reindexRecommended,
+          },
         }));
         cg.destroy();
         return;
@@ -796,6 +807,15 @@ program
         success('Index is up to date');
       }
       console.log();
+
+      // Re-index hint: the index was built by an older engine than the one now
+      // running, so a rebuild would add data a migration can't backfill.
+      if (reindexRecommended) {
+        const builtWith = buildInfo.version ? `v${buildInfo.version.replace(/^v/, '')}` : 'an earlier version';
+        warn(`Index was built by ${builtWith}; re-index to pick up this engine's improvements.`);
+        info('Run "codegraph index -f" (full rebuild) or "codegraph sync"');
+        console.log();
+      }
 
       cg.destroy();
     } catch (err) {
@@ -872,6 +892,106 @@ program
       cg.destroy();
     } catch (err) {
       error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+/**
+ * codegraph explore <query...>
+ *
+ * The CLI face of the MCP codegraph_explore tool — same handler, same
+ * output (source of the relevant symbols grouped by file + the call path
+ * among them). Exists so agents WITHOUT the MCP tools — Task-tool
+ * subagents (which don't inherit MCP tools, #704) and non-MCP harnesses —
+ * can reach the graph through a plain shell command.
+ */
+program
+  .command('explore <query...>')
+  .description('Explore an area: relevant symbols\' source + call paths in one shot (same output as the codegraph_explore MCP tool)')
+  .option('-p, --path <path>', 'Project path')
+  .option('--max-files <number>', 'Maximum number of files to include source from')
+  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string }) => {
+    const projectPath = resolveProjectPath(options.path);
+
+    try {
+      if (!isInitialized(projectPath)) {
+        error(`CodeGraph isn't available here — no .codegraph/ index exists in ${projectPath}. If you are an AI agent: continue with your usual tools; indexing is the user's decision, do not run it yourself. (The project owner can enable CodeGraph with 'codegraph init'.)`);
+        process.exit(1);
+      }
+
+      const { default: CodeGraph } = await loadCodeGraph();
+      const cg = await CodeGraph.open(projectPath);
+      const { ToolHandler } = await import('../mcp/tools');
+      const handler = new ToolHandler(cg);
+
+      const args: Record<string, unknown> = { query: queryParts.join(' ') };
+      if (options.maxFiles) args.maxFiles = parseInt(options.maxFiles, 10);
+      const result = await handler.execute('codegraph_explore', args);
+
+      console.log(result.content[0]?.text ?? '');
+      cg.destroy();
+      if (result.isError) process.exit(1);
+    } catch (err) {
+      error(`Explore failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+/**
+ * codegraph node <name>
+ *
+ * The CLI face of the MCP codegraph_node tool: one symbol's source +
+ * caller/callee trail, or a whole file with line numbers + dependents
+ * (Read-parity). Same subagent/non-MCP rationale as `explore`.
+ */
+program
+  .command('node <name>')
+  .description('One symbol\'s source + caller/callee trail, or read a file with line numbers + dependents (same output as the codegraph_node MCP tool)')
+  .option('-p, --path <path>', 'Project path')
+  .option('-f, --file <file>', 'Treat as file mode (or disambiguate a symbol to this file)')
+  .option('--offset <number>', 'File mode: 1-based start line')
+  .option('--limit <number>', 'File mode: maximum lines')
+  .option('--symbols-only', 'File mode: just the symbol map + dependents')
+  .action(async (name: string, options: { path?: string; file?: string; offset?: string; limit?: string; symbolsOnly?: boolean }) => {
+    const projectPath = resolveProjectPath(options.path);
+
+    try {
+      if (!isInitialized(projectPath)) {
+        error(`CodeGraph isn't available here — no .codegraph/ index exists in ${projectPath}. If you are an AI agent: continue with your usual tools; indexing is the user's decision, do not run it yourself. (The project owner can enable CodeGraph with 'codegraph init'.)`);
+        process.exit(1);
+      }
+
+      const { default: CodeGraph } = await loadCodeGraph();
+      const cg = await CodeGraph.open(projectPath);
+      const { ToolHandler } = await import('../mcp/tools');
+      const handler = new ToolHandler(cg);
+
+      // A name with a path separator is a file read; otherwise a symbol
+      // (use --file for basename-only file reads or to pin an overload).
+      // Both separators: Windows users type src\auth\session.ts. Symbols
+      // never contain either ('/' isn't an identifier char anywhere we
+      // index; C++ scope is '::', JS members '.').
+      const args: Record<string, unknown> = {};
+      if (options.file) {
+        args.file = options.file;
+        if (name && name !== options.file) args.symbol = name;
+      } else if (name.includes('/') || name.includes('\\')) {
+        args.file = name.replace(/\\/g, '/');
+      } else {
+        args.symbol = name;
+        args.includeCode = true;
+      }
+      if (options.offset) args.offset = parseInt(options.offset, 10);
+      if (options.limit) args.limit = parseInt(options.limit, 10);
+      if (options.symbolsOnly) args.symbolsOnly = true;
+
+      const result = await handler.execute('codegraph_node', args);
+
+      console.log(result.content[0]?.text ?? '');
+      cg.destroy();
+      if (result.isError) process.exit(1);
+    } catch (err) {
+      error(`Node lookup failed: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
   });
@@ -1662,6 +1782,43 @@ program
       error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
+  });
+
+/**
+ * codegraph upgrade [version]
+ *
+ * Self-update, however CodeGraph was installed (bundle via install.sh/.ps1,
+ * npm-global, npx, or a source checkout). See ../upgrade for the detection and
+ * per-method upgrade logic.
+ */
+program
+  .command('upgrade [version]')
+  .description('Update CodeGraph to the latest release (or a specific version)')
+  .option('--check', 'Check whether an update is available without installing')
+  .option('-f, --force', 'Reinstall even if already on the target version')
+  .action(async (versionArg: string | undefined, options: { check?: boolean; force?: boolean }) => {
+    const up = await import('../upgrade');
+    const method = up.detectInstallMethod({
+      filename: __filename,
+      platform: process.platform,
+      cwd: process.cwd(),
+    });
+    const pin = versionArg || process.env.CODEGRAPH_VERSION || undefined;
+    const code = await up.runUpgrade(
+      { version: pin, check: options.check, force: options.force },
+      {
+        currentVersion: packageJson.version,
+        method,
+        resolveLatest: () => up.resolveLatestVersion(),
+        run: up.defaultRun,
+        hasCommand: up.hasCommand,
+        log: (m: string) => console.log(m),
+        warn: (m: string) => warn(m),
+        error: (m: string) => error(m),
+        platform: process.platform,
+      }
+    );
+    process.exit(code);
   });
 
 // Parse and run
