@@ -406,6 +406,221 @@ function flutterBuildEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[
 }
 
 /**
+ * Phase 4d: ArkUI @State change → build() re-render (the ArkTS analog of
+ * react-render and flutter-build). In an ArkUI @Component struct, mutating a
+ * @State-decorated property triggers the framework to re-run `build()`, but
+ * that hop is framework-internal — no static edge — so a flow like
+ * "onClick → addTask → this.tasks.push(…) → UI rebuild" dead-ends at the
+ * mutating method. Bridge it: for each ArkTS struct with a `build` method,
+ * scan its source for @State-decorated property names, then link every sibling
+ * method whose body writes to any of those properties → `build`.
+ * Over-approximation accepted (reachability-correct); capped per struct.
+ */
+function arkuiReactiveRenderEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const struct of queries.getNodesByKind('struct')) {
+    if (struct.language !== 'arkts') continue;
+    const children = queries.getOutgoingEdges(struct.id, ['contains'])
+      .map((e) => queries.getNodeById(e.target))
+      .filter((n): n is Node => !!n && n.kind === 'method');
+    const build = children.find((n) => n.name === 'build');
+    if (!build) continue;
+
+    // Collect @State-decorated property names from the struct's source.
+    // State declarations appear before the build method, so scan from the
+    // struct start line to the build method start line.
+    const content = ctx.readFile(struct.filePath);
+    if (!content) continue;
+    const structSrc = sliceLines(content, struct.startLine, build.startLine);
+    if (!structSrc) continue;
+    const statePropPattern = /@State\s+(?:@\w+(?:\([^)]*\))?\s+)*(?:private\s+|public\s+|protected\s+)?(\w+)\s*:/g;
+    const stateProps = new Set<string>();
+    let sm: RegExpExecArray | null;
+    while ((sm = statePropPattern.exec(structSrc)) !== null) {
+      if (sm[1]) stateProps.add(sm[1]);
+    }
+    if (stateProps.size === 0) continue;
+
+    // Build a regex that matches writes to any @State property.
+    // Covers assignment (this.prop = val, ++, --, +=, -=) and Map/Set
+    // mutation methods that ArkTS tracks for reactivity:
+    //   Map:  this.prop.set(key, val), .delete(key), .clear()
+    //   Set:  this.prop.add(val), .delete(val), .clear()
+    // Array methods (.push / .pop / .splice) are NOT included — this codebase
+    // uses spread-reassignment (this.items = [...this.items, item]) for arrays,
+    // which is covered by the '=' branch. Including them would false-positive
+    // on store-object method calls like this.store.pop().
+    const propNames = Array.from(stateProps);
+    const writeRe = new RegExp(
+      `this\\.(${propNames.map(escapeRe).join('|')})\\s*(?:=|\\+\\+|--|\\+=|-=|\\.(?:set|add|delete|clear)\\()`,
+    );
+    let added = 0;
+    for (const m of children) {
+      if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
+      if (m.id === build.id) continue;
+      const methodContent = ctx.readFile(m.filePath);
+      const src = methodContent && sliceLines(methodContent, m.startLine, m.endLine);
+      if (!src || !writeRe.test(src)) continue;
+      // Reset lastIndex since .test() consumed the match state
+      writeRe.lastIndex = 0;
+      const propMatch = writeRe.exec(src);
+      const via = propMatch?.[1] ?? 'state';
+      const key = `${m.id}>${build.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({
+        source: m.id, target: build.id, kind: 'calls', line: m.startLine,
+        provenance: 'heuristic',
+        metadata: {
+          synthesizedBy: 'arkui-reactive',
+          via,
+          registeredAt: `${build.filePath}:${build.startLine}`,
+        },
+      });
+      added++;
+    }
+  }
+  return edges;
+}
+
+/**
+ * Phase 4e: ArkUI @StorageProp / @StorageLink change → build() re-render.
+ * In an ArkUI @Component struct, mutating an @StorageProp- or @StorageLink-
+ * decorated property (backed by AppStorage global state) triggers the
+ * framework to re-run `build()`, but that hop is framework-internal — no
+ * static edge — so a flow like "onClick → setAppStorageValue → UI rebuild"
+ * dead-ends at the mutating method. Bridge it: for each ArkTS struct with a
+ * `build` method, scan its source for @StorageProp / @StorageLink decorated
+ * property names, then link every sibling method whose body writes to any of
+ * those properties → `build`. Over-approximation accepted
+ * (reachability-correct); capped per struct.
+ */
+function arkuiStorageReactiveEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const struct of queries.getNodesByKind('struct')) {
+    if (struct.language !== 'arkts') continue;
+    const children = queries.getOutgoingEdges(struct.id, ['contains'])
+      .map((e) => queries.getNodeById(e.target))
+      .filter((n): n is Node => !!n && n.kind === 'method');
+    const build = children.find((n) => n.name === 'build');
+    if (!build) continue;
+
+    // Collect @StorageProp / @StorageLink decorated property names from
+    // the struct's source. Declarations appear before the build method,
+    // so scan from the struct start line to the build method start line.
+    const content = ctx.readFile(struct.filePath);
+    if (!content) continue;
+    const structSrc = sliceLines(content, struct.startLine, build.startLine);
+    if (!structSrc) continue;
+    const storagePropPattern = /@StorageProp\s*(?:\([^)]*\))?\s+(?:private\s+|public\s+)?(\w+)\s*:/g;
+    const storageLinkPattern = /@StorageLink\s*(?:\([^)]*\))?\s+(?:private\s+|public\s+)?(\w+)\s*:/g;
+    const storageProps = new Set<string>();
+    let sm: RegExpExecArray | null;
+    while ((sm = storagePropPattern.exec(structSrc)) !== null) {
+      if (sm[1]) storageProps.add(sm[1]);
+    }
+    while ((sm = storageLinkPattern.exec(structSrc)) !== null) {
+      if (sm[1]) storageProps.add(sm[1]);
+    }
+    if (storageProps.size === 0) continue;
+
+    // Build a regex that matches writes to any storage property: this.<prop> with =, ++, --, +=, -=
+    const propNames = Array.from(storageProps);
+    const writeRe = new RegExp(`this\\.(${propNames.map(escapeRe).join('|')})\\s*(?:=|\\+\\+|--|\\+=|-=)`);
+    let added = 0;
+    for (const m of children) {
+      if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
+      if (m.id === build.id) continue;
+      const methodContent = ctx.readFile(m.filePath);
+      const src = methodContent && sliceLines(methodContent, m.startLine, m.endLine);
+      if (!src || !writeRe.test(src)) continue;
+      const propMatch = writeRe.exec(src);
+      const via = propMatch?.[1] ?? 'storage';
+      const key = `${m.id}>${build.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({
+        source: m.id, target: build.id, kind: 'calls', line: m.startLine,
+        provenance: 'heuristic',
+        metadata: {
+          synthesizedBy: 'arkui-storage',
+          via,
+          registeredAt: `${build.filePath}:${build.startLine}`,
+        },
+      });
+      added++;
+    }
+  }
+  return edges;
+}
+
+/**
+ * Phase 7: Delegation bridge. A method whose body delegates directly to
+ * a field's method (`return this.x.y()` or `this.x.y()`) acts as a proxy —
+ * callers see the delegator but never the real implementation. Bridge it:
+ * for each class method that is a single delegation statement, synthesize
+ * a `calls` edge from the delegator → same-named method nodes.
+ *
+ * Name-only matching (over-approximation) keeps this language-agnostic —
+ * applies to TypeScript, JavaScript, ArkTS, Java, Kotlin, C#, and any
+ * language with `this.field.method()` syntax.
+ */
+function delegationBridgeEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  for (const cls of queries.getNodesByKind('class')) {
+    const methods = queries.getOutgoingEdges(cls.id, ['contains'])
+      .map((e) => queries.getNodeById(e.target))
+      .filter((n): n is Node => !!n && n.kind === 'method');
+    let added = 0;
+    for (const m of methods) {
+      if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
+      const content = ctx.readFile(m.filePath);
+      const src = content && sliceLines(content, m.startLine, m.endLine);
+      if (!src) continue;
+      // Find the brace-enclosed body and check if it's a single delegation call
+      const bodyStart = src.indexOf('{');
+      const bodyEnd = src.lastIndexOf('}');
+      if (bodyStart === -1 || bodyEnd === -1 || bodyStart >= bodyEnd) continue;
+      const body = src.slice(bodyStart + 1, bodyEnd).trim();
+      // Match: optional `return`, then `this.field.method(...)`, optional semicolon
+      const dl = body.match(/^(?:return\s+)?this\.(\w+)\.(\w+)\([^)]*\)\s*;?\s*$/);
+      if (!dl) continue;
+      const [, , methodName] = dl;
+      if (!methodName) continue;
+      // Find same-named methods on any class (language-agnostic, name-only)
+      const candidates = ctx.getNodesByName(methodName).filter(
+        (n): n is Node => !!n && n.kind === 'method' && n.id !== m.id,
+      );
+      if (candidates.length === 0 || candidates.length > MAX_CALLBACKS_PER_CHANNEL) continue;
+      for (const target of candidates) {
+        const key = `${m.id}>${target.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push({
+          source: m.id, target: target.id, kind: 'calls', line: m.startLine,
+          provenance: 'heuristic',
+          metadata: {
+            synthesizedBy: 'delegation-bridge',
+            via: 'delegate',
+            registeredAt: `${m.filePath}:${m.startLine}`,
+          },
+        });
+        added++;
+      }
+    }
+  }
+  return edges;
+}
+
+/** Escape special regex characters in a string */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Phase 4c: C++ virtual override. A call through a base/interface pointer
  * (`db->Get(...)`, `iter->Next()`) dispatches at runtime to a subclass override,
  * but that hop is a vtable indirection — no static call edge — so a flow stops at
@@ -1649,7 +1864,8 @@ function svelteKitLoadEdges(ctx: ResolutionContext): Edge[] {
 /**
  * Synthesize dispatcher→callback edges (field observers + EventEmitters +
  * React re-render + JSX children + Vue templates + SvelteKit load + RN event
- * channel + Fabric native-impl + MyBatis Java↔XML + Gin middleware chain).
+ * channel + Fabric native-impl + MyBatis Java↔XML + Gin middleware chain +
+ * ArkUI @State→build + @StorageProp/@StorageLink→build reactive render).
  * Returns the count added. Never throws into indexing — callers wrap in try/catch.
  */
 export function synthesizeCallbackEdges(queries: QueryBuilder, ctx: ResolutionContext): number {
@@ -1677,6 +1893,9 @@ export function synthesizeCallbackEdges(queries: QueryBuilder, ctx: ResolutionCo
   const svelteKitEdges = svelteKitLoadEdges(ctx);
   const pascalEdges = pascalFormEdges(ctx);
   const flutterEdges = flutterBuildEdges(queries, ctx);
+  const arkuiEdges = arkuiReactiveRenderEdges(queries, ctx);
+  const arkuiStorageEdges = arkuiStorageReactiveEdges(queries, ctx);
+  const delegationEdges = delegationBridgeEdges(queries, ctx);
   const cppEdges = cppOverrideEdges(queries);
   const ifaceEdges = interfaceOverrideEdges(queries);
   const kotlinExpectActual = kotlinExpectActualEdges(queries);
@@ -1700,6 +1919,9 @@ export function synthesizeCallbackEdges(queries: QueryBuilder, ctx: ResolutionCo
     ...svelteKitEdges,
     ...pascalEdges,
     ...flutterEdges,
+    ...arkuiEdges,
+    ...arkuiStorageEdges,
+    ...delegationEdges,
     ...cppEdges,
     ...ifaceEdges,
     ...kotlinExpectActual,

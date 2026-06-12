@@ -1669,3 +1669,301 @@ export class UsersController {
     expect(references.map((r) => r.referenceName)).toEqual(['real']);
   });
 });
+
+import { arkuiResolver } from '../src/resolution/frameworks/arkui';
+import type { Node } from '../src/types';
+
+describe('arkuiResolver', () => {
+  const baseContext = {
+    getNodesInFile: () => [],
+    getNodesByName: () => [],
+    getNodesByQualifiedName: () => [],
+    getNodesByKind: () => [],
+    fileExists: () => false,
+    getProjectRoot: () => '/test',
+    getAllFiles: () => [],
+    getNodesByLowerName: () => [],
+    getImportMappings: () => [],
+    readFile: () => null,
+  };
+
+  describe('detect', () => {
+    it('returns true when .ets files exist', () => {
+      const ctx = { ...baseContext, getAllFiles: () => ['pages/Index.ets', 'utils/helpers.ts'] };
+      expect(arkuiResolver.detect(ctx as any)).toBe(true);
+    });
+
+    it('returns false when no .ets files exist', () => {
+      const ctx = { ...baseContext, getAllFiles: () => ['pages/Index.ts', 'utils/helpers.ts'] };
+      expect(arkuiResolver.detect(ctx as any)).toBe(false);
+    });
+  });
+
+  describe('extract', () => {
+    it('returns empty for non-.ets files', () => {
+      const result = arkuiResolver.extract!('component.ts', '@Component struct Foo {}');
+      expect(result.nodes).toHaveLength(0);
+      expect(result.references).toHaveLength(0);
+    });
+
+    it('extracts @Component struct as component node', () => {
+      const src = `
+@Component
+struct MyWidget {
+  build() {
+    Column() {}
+  }
+}
+`;
+      const result = arkuiResolver.extract!('MyWidget.ets', src);
+      const compNodes = result.nodes.filter((n) => n.kind === 'component');
+      expect(compNodes).toHaveLength(1);
+      expect(compNodes[0]!.name).toBe('MyWidget');
+      expect(compNodes[0]!.language).toBe('arkts');
+      expect(compNodes[0]!.decorators).toEqual(['Component']);
+    });
+
+    it('does not match @ComponentV2 (word-boundary guard)', () => {
+      const src = `
+@ComponentV2
+struct V2Widget {
+  build() {
+    Column() {}
+  }
+}
+`;
+      const result = arkuiResolver.extract!('V2Widget.ets', src);
+      const compNodes = result.nodes.filter((n) => n.kind === 'component');
+      expect(compNodes).toHaveLength(0);
+    });
+
+    it('sets decorators including Entry on @Entry @Component struct', () => {
+      const src = `
+@Entry
+@Component
+struct IndexPage {
+  build() {
+    Text('Hello')
+  }
+}
+`;
+      const result = arkuiResolver.extract!('pages/IndexPage.ets', src);
+      const compNode = result.nodes.find((n) => n.kind === 'component');
+      expect(compNode).toBeDefined();
+      expect(compNode!.decorators).toContain('Entry');
+      expect(compNode!.decorators).toContain('Component');
+    });
+
+    it('sets isExported on exported @Component struct', () => {
+      const src = `
+export @Component
+struct SharedWidget {
+  build() {
+    Text('shared')
+  }
+}
+`;
+      const result = arkuiResolver.extract!('SharedWidget.ets', src);
+      const compNode = result.nodes.find((n) => n.kind === 'component');
+      expect(compNode).toBeDefined();
+      expect(compNode!.isExported).toBe(true);
+    });
+
+    it('extracts @Entry @Component struct as route node', () => {
+      const src = `
+@Entry
+@Component
+struct Index {
+  build() {
+    Text('Hello')
+  }
+}
+`;
+      const result = arkuiResolver.extract!('pages/Index.ets', src);
+      const routeNodes = result.nodes.filter((n) => n.kind === 'route');
+      expect(routeNodes).toHaveLength(1);
+      expect(routeNodes[0]!.language).toBe('arkts');
+      expect(routeNodes[0]!.name).toContain('Index');
+    });
+
+    it('extracts multiple @Component structs in one file', () => {
+      const src = `
+@Component
+struct Header {
+  build() {
+    Row() { Text('Header') }
+  }
+}
+
+@Component
+struct Footer {
+  build() {
+    Row() { Text('Footer') }
+  }
+}
+`;
+      const result = arkuiResolver.extract!('widgets.ets', src);
+      const compNodes = result.nodes.filter((n) => n.kind === 'component');
+      expect(compNodes).toHaveLength(2);
+      expect(compNodes.map((n) => n.name).sort()).toEqual(['Footer', 'Header']);
+    });
+
+    it('extracts @Builder function as function node', () => {
+      const src = `
+@Builder
+function myListBuilder() {
+  List() {
+    ListItem() { Text('Item') }
+  }
+}
+`;
+      const result = arkuiResolver.extract!('builders.ets', src);
+      const funcNode = result.nodes.find((n) => n.kind === 'function' && n.name === 'myListBuilder');
+      expect(funcNode).toBeDefined();
+      expect(funcNode!.language).toBe('arkts');
+      // Should emit a decorates reference to Builder
+      const decRef = result.references.find((r) => r.referenceKind === 'decorates' && r.referenceName === 'Builder');
+      expect(decRef).toBeDefined();
+    });
+
+    it('extracts router.pushUrl as route reference', () => {
+      const src = `
+function navigateToDetail() {
+  router.pushUrl({ url: 'pages/Detail' });
+}
+`;
+      const result = arkuiResolver.extract!('navigator.ets', src);
+      const routeRef = result.references.find(
+        (r) => r.referenceKind === 'references' && r.referenceName === 'pages/Detail',
+      );
+      expect(routeRef).toBeDefined();
+    });
+
+    it('extracts router.replaceUrl as route reference', () => {
+      const src = `router.replaceUrl({ url: 'pages/Login' });`;
+      const result = arkuiResolver.extract!('auth.ets', src);
+      const routeRef = result.references.find(
+        (r) => r.referenceKind === 'references' && r.referenceName === 'pages/Login',
+      );
+      expect(routeRef).toBeDefined();
+    });
+
+    it('extracts @BuilderParam as reference', () => {
+      const src = `
+@Component
+struct CustomContainer {
+  @BuilderParam content: () => void;
+  build() {
+    Column() { this.content() }
+  }
+}
+`;
+      const result = arkuiResolver.extract!('CustomContainer.ets', src);
+      const ref = result.references.find((r) => r.referenceName === 'content');
+      expect(ref).toBeDefined();
+      expect(ref!.referenceKind).toBe('references');
+    });
+
+    it('component id is unique across files with same component name', () => {
+      const result1 = arkuiResolver.extract!('pages/Index.ets', '@Component struct MyComp { build() {} }');
+      const result2 = arkuiResolver.extract!('views/Index.ets', '@Component struct MyComp { build() {} }');
+      const id1 = result1.nodes.find((n) => n.kind === 'component')!.id;
+      const id2 = result2.nodes.find((n) => n.kind === 'component')!.id;
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  describe('resolve', () => {
+    it('resolves PascalCase component name to component node', () => {
+      const compNode = {
+        id: 'component:components/Card.ets:Card:5',
+        kind: 'component' as const,
+        name: 'Card',
+        qualifiedName: 'components/Card.ets::Card',
+        filePath: 'components/Card.ets',
+        language: 'arkts' as const,
+        startLine: 5, endLine: 5, startColumn: 0, endColumn: 0,
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        ...baseContext,
+        getNodesByKind: (kind: string) => kind === 'component' ? [compNode] : [],
+      };
+      const ref: UnresolvedRef = {
+        fromNodeId: 'file:pages/Index.ets',
+        referenceName: 'Card',
+        referenceKind: 'calls',
+        line: 10, column: 5,
+        filePath: 'pages/Index.ets',
+        language: 'arkts',
+      };
+      const resolved = arkuiResolver.resolve(ref, ctx as any);
+      expect(resolved).not.toBeNull();
+      expect(resolved!.targetNodeId).toBe(compNode.id);
+      expect(resolved!.confidence).toBeGreaterThanOrEqual(0.8);
+      expect(resolved!.resolvedBy).toBe('framework');
+    });
+
+    it('does not resolve built-in component names', () => {
+      const ctx = {
+        ...baseContext,
+        getNodesByKind: () => [],
+      };
+      for (const builtin of ['Column', 'Text', 'Button', 'ForEach', 'Navigation']) {
+        const ref: UnresolvedRef = {
+          fromNodeId: 'file:pages/Index.ets',
+          referenceName: builtin,
+          referenceKind: 'calls',
+          line: 1, column: 1,
+          filePath: 'pages/Index.ets',
+          language: 'arkts',
+        };
+        expect(arkuiResolver.resolve(ref, ctx as any)).toBeNull();
+      }
+    });
+
+    it('does not resolve when no matching component exists', () => {
+      const ctx = {
+        ...baseContext,
+        getNodesByKind: () => [],
+      };
+      const ref: UnresolvedRef = {
+        fromNodeId: 'file:pages/Index.ets',
+        referenceName: 'NonExistentWidget',
+        referenceKind: 'calls',
+        line: 1, column: 1,
+        filePath: 'pages/Index.ets',
+        language: 'arkts',
+      };
+      expect(arkuiResolver.resolve(ref, ctx as any)).toBeNull();
+    });
+
+    it('resolves router.pushUrl path to route node', () => {
+      const routeNode = {
+        id: 'route:pages/Detail.ets:3:/pages/Detail',
+        kind: 'route' as const,
+        name: '/pages/Detail',
+        qualifiedName: 'pages/Detail.ets::route:/pages/Detail',
+        filePath: 'pages/Detail.ets',
+        language: 'arkts' as const,
+        startLine: 3, endLine: 3, startColumn: 0, endColumn: 0,
+        updatedAt: Date.now(),
+      };
+      const ctx = {
+        ...baseContext,
+        getNodesByKind: (kind: string) => kind === 'route' ? [routeNode] : [],
+      };
+      const ref: UnresolvedRef = {
+        fromNodeId: 'file:pages/Index.ets',
+        referenceName: 'pages/Detail',
+        referenceKind: 'references',
+        line: 5, column: 1,
+        filePath: 'pages/Index.ets',
+        language: 'arkts',
+      };
+      const resolved = arkuiResolver.resolve(ref, ctx as any);
+      expect(resolved).not.toBeNull();
+      expect(resolved!.targetNodeId).toBe(routeNode.id);
+    });
+  });
+});

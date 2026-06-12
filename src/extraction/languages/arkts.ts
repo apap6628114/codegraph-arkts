@@ -111,6 +111,81 @@ export const arktsExtractor: LanguageExtractor = {
     }
     return false;
   },
+  /**
+   * Extract ArkUI decorator names from decorator nodes applied to structs,
+   * methods, and properties. Handles three decorator forms:
+   *
+   *   - Simple: `@Component` → decorator → identifier("Component")
+   *   - Call: `@Watch('callback')` → decorator → call_expression → identifier("Watch")
+   *   - Member: `@AnimatorExtend.AnimatorExtend` → decorator → member_expression
+   *
+   * Decorators may be direct named children of the declaration (methods,
+   * properties) or preceding siblings (struct-level decorators).
+   */
+  extractModifiers: (node) => {
+    const mods: string[] = [];
+
+    /** Extract the decorator's simple name from a decorator AST node. */
+    const getName = (dec: typeof node): string | undefined => {
+      for (let i = 0; i < dec.namedChildCount; i++) {
+        const child = dec.namedChild(i);
+        if (!child) continue;
+        if (child.type === 'call_expression') {
+          const fn = getChildByField(child, 'function') ?? child.namedChild(0);
+          if (fn && fn.text) {
+            const text = fn.text.trim();
+            if (text) return text;
+          }
+        }
+        if (child.type === 'identifier') {
+          return child.text;
+        }
+        if (child.type === 'member_expression') {
+          // Take the last identifier for dotted decorators
+          for (let j = child.namedChildCount - 1; j >= 0; j--) {
+            const c = child.namedChild(j);
+            if (c && c.type === 'identifier') return c.text;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    // 1. Direct decorator children of the node (methods, properties)
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (child?.type !== 'decorator') continue;
+      const name = getName(child);
+      if (name) mods.push(name);
+    }
+
+    // 2. Preceding decorator siblings within the parent (struct-level)
+    const parent = node.parent;
+    if (parent) {
+      const nodeStart = node.startIndex;
+      let nodeIdx = -1;
+      for (let i = 0; i < parent.namedChildCount; i++) {
+        const sibling = parent.namedChild(i);
+        if (sibling && sibling.startIndex === nodeStart) {
+          nodeIdx = i;
+          break;
+        }
+      }
+      if (nodeIdx > 0) {
+        const preceding: string[] = [];
+        for (let j = nodeIdx - 1; j >= 0; j--) {
+          const sibling = parent.namedChild(j);
+          if (!sibling) continue;
+          if (sibling.type !== 'decorator') break;
+          const name = getName(sibling);
+          if (name) preceding.unshift(name);
+        }
+        mods.unshift(...preceding);
+      }
+    }
+
+    return mods.length > 0 ? mods : undefined;
+  },
   extractImport: (node, source) => {
     // Regular import: source field is directly on import_statement
     let srcNode = node.childForFieldName('source');

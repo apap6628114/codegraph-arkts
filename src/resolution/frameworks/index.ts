@@ -11,6 +11,7 @@ import { laravelResolver } from './laravel';
 import { expressResolver } from './express';
 import { nestjsResolver } from './nestjs';
 import { reactResolver } from './react';
+import { arkuiResolver } from './arkui';
 import { svelteResolver } from './svelte';
 import { vueResolver } from './vue';
 import { astroResolver } from './astro';
@@ -38,6 +39,7 @@ const FRAMEWORK_RESOLVERS: FrameworkResolver[] = [
   expressResolver,
   nestjsResolver,
   reactResolver,
+  arkuiResolver,
   svelteResolver,
   vueResolver,
   astroResolver,
@@ -128,6 +130,7 @@ export { laravelResolver, FACADE_MAPPINGS } from './laravel';
 export { expressResolver } from './express';
 export { nestjsResolver } from './nestjs';
 export { reactResolver } from './react';
+export { arkuiResolver } from './arkui';
 export { svelteResolver } from './svelte';
 export { vueResolver } from './vue';
 export { astroResolver } from './astro';
