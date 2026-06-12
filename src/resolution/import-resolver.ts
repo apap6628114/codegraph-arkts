@@ -1272,9 +1272,16 @@ export function resolveViaImport(
     if (moduleFile) return moduleFile;
   }
 
-  // Check if the reference name matches any import
+  // Check if the reference name matches any import.
+  //
+  // A dotted suffix like `appStore.autoCheckinIfNeeded` is a member access on
+  // the imported VALUE — the `.method` part must be resolved through the type
+  // system (name-matcher / method-call resolution), not the import chain. Only
+  // namespace imports (`import * as ns`) keep the dotted-prefix match because
+  // `ns.something` names an export of the module itself.
   for (const imp of imports) {
-    if (imp.localName === ref.referenceName || ref.referenceName.startsWith(imp.localName + '.')) {
+    const dottedPrefix = imp.isNamespace && ref.referenceName.startsWith(imp.localName + '.');
+    if (imp.localName === ref.referenceName || dottedPrefix) {
       // Resolve the import path
       const resolvedPath = resolveImportPath(
         imp.source,
