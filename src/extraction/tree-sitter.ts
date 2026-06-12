@@ -1256,7 +1256,7 @@ export class TreeSitterExtractor {
     // Extract inheritance (e.g. Swift: struct HTTPMethod: RawRepresentable)
     this.extractInheritance(node, structNode.id);
 
-// Extract decorators applied to the struct (@Component, @Entry, @State)
+    // Extract decorators applied to the struct (@Component, @Entry, @State)
     this.extractDecoratorsFor(node, structNode.id);
     // C# primary-constructor parameter dependencies (`struct P(int x)`, and
     // `record struct M(decimal Amount)` which the grammar nests here).

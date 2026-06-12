@@ -685,8 +685,6 @@ npm run build:wasm-arkts -- /path/to/tree-sitter-arkts
 
 ## 许可证
 
-## 许可证
-
 MIT — 参见 [LICENSE](LICENSE)。上游 CodeGraph 由 Colby Mchenry 开发。ArkTS 语法源自 tree-sitter-typescript 和 harmony-contrib 的 tree-sitter-arkts。
 
 ---
