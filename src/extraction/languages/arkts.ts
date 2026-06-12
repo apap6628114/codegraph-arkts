@@ -1,10 +1,12 @@
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
+import { classifyTsClassMember } from './typescript';
 
 export const arktsExtractor: LanguageExtractor = {
   functionTypes: ['function_declaration', 'function_signature', 'arrow_function', 'function_expression'],
   classTypes: ['class_declaration', 'abstract_class_declaration'],
   methodTypes: ['method_definition', 'public_field_definition'],
+  classifyMethodNode: classifyTsClassMember,
   interfaceTypes: ['interface_declaration'],
   structTypes: ['struct_declaration'],
   enumTypes: ['enum_declaration'],
