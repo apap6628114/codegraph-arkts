@@ -2135,7 +2135,8 @@ export class TreeSitterExtractor {
         // called/typed symbols still record a cross-file dependency (TS/JS only).
         if (
           this.language === 'typescript' || this.language === 'tsx' ||
-          this.language === 'javascript' || this.language === 'jsx'
+          this.language === 'javascript' || this.language === 'jsx' ||
+          this.language === 'arkts'
         ) {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitImportBindingRefs(node, parentId);
