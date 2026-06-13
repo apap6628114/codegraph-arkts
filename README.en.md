@@ -13,7 +13,7 @@
 
 </div>
 
-CodeGraph is a tree-sitter-powered knowledge graph that indexes every symbol, call, import, and inheritance edge in your codebase into a local SQLite database. AI coding agents (Claude Code, Cursor, Codex CLI) query it directly instead of grep/read loops — faster and cheaper.
+CodeGraph is a tree-sitter-powered knowledge graph engine that indexes every symbol, call, import, and inheritance edge in your codebase into a local SQLite database. AI coding agents (Claude Code, Cursor, Codex CLI) query it directly instead of grep/read loops — faster and cheaper.
 
 This fork adds **full ArkTS language support** for HarmonyOS application development.
 
@@ -40,7 +40,8 @@ This fork adds **full ArkTS language support** for HarmonyOS application develop
 - **Language Extractor** — `src/extraction/languages/arkts.ts` with ArkUI-specific AST node type mappings
 - **WASM Grammar** — `tree-sitter-arkts` compiled to WASM for tree-sitter parsing; rebuild via `npm run build:wasm-arkts [source-path]`
 - **AST Adaptations** — Handles `function_signature` body resolution (ArkTS separates signatures from bodies in `export function`), `arkui_component_expression` call recognition, `lazy_import_statement` import extraction
-- **Core Patches** — `extractStruct` decorator support, variable extraction language registration, type annotation language registration
+- **Core Enhancements** — `extractStruct` decorator support, variable extraction language registration, type annotation language registration
+- **SQLite Backend** — Added a `better-sqlite3` fallback: automatically falls back when the built-in `node:sqlite` is unavailable or lacks FTS5 (applies to some Windows Node distributions)
 
 ## Supported Languages
 
@@ -66,10 +67,12 @@ This fork adds **full ArkTS language support** for HarmonyOS application develop
 
 ### Prerequisites
 
-- Node.js 22.5+ (for `node:sqlite` with FTS5), or install `better-sqlite3` as fallback
+- Node.js 22.5+ (for the built-in `node:sqlite` with FTS5), or install `better-sqlite3` as a fallback
 - A HarmonyOS / ArkTS project with `.ets` files
 
 ### Install & Initialize
+
+This fork is used from source and is not published to npm:
 
 ```bash
 # 1. Build this fork
@@ -83,7 +86,7 @@ node dist/bin/codegraph.js init /path/to/your/project
 # 3. Index all files
 node dist/bin/codegraph.js index /path/to/your/project
 
-# 4. Install MCP server for Claude Code (project-local)
+# 4. Install the MCP server (Claude Code example, project-local)
 node dist/bin/codegraph.js install --location=local --yes
 ```
 
@@ -114,7 +117,7 @@ Source (.ets, .ts, .py ...)
       → Nodes (functions, structs, methods, imports)
       → Edges (calls, contains, decorates, extends)
         → SQLite knowledge graph
-          → MCP tools (search, context, trace, callers, callees)
+          → MCP tools (search, explore, node, callers, callees)
             → AI coding agent
 ```
 
@@ -132,7 +135,7 @@ export const arktsExtractor: LanguageExtractor = {
 };
 ```
 
-Language-specific hooks (`visitNode`, `resolveBody`, `extractImport`) handle AST peculiarities like ArkTS's `function_signature`/body separation in `export function`.
+Language-specific hooks (`resolveBody`, `getVisibility`, etc.) handle ArkTS's AST peculiarities, such as the `function_signature`/body separation in `export function`, body resolution for arrow-function class fields, and `accessibility_modifier` visibility recognition.
 
 ## Project Structure
 
