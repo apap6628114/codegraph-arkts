@@ -2,20 +2,30 @@
 
 # CodeGraph-ArkTS
 
-### CodeGraph 分支 — ArkTS / HarmonyOS 支持
+### CodeGraph 分支 — ArkTS / HarmonyOS 支持 · 同步上游 v1.0.0
 
-**ArkTS、TypeScript 及 20+ 语言的预索引语义代码知识图谱**
+**ArkTS、TypeScript 及 24+ 语言的预索引语义代码知识图谱**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Forked from colbymchenry/codegraph](https://img.shields.io/badge/fork-colbymchenry%2Fcodegraph-blue)](https://github.com/colbymchenry/codegraph)
+[![Sync: v1.0.0](https://img.shields.io/badge/sync-v1.0.0-brightgreen)](https://github.com/colbymchenry/codegraph)
+
+[![Windows](https://img.shields.io/badge/Windows-supported-blue.svg)](#支持的语言)
+[![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#支持的语言)
+[![Linux](https://img.shields.io/badge/Linux-supported-blue.svg)](#支持的语言)
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-supported-blueviolet.svg)](#支持的语言)
+[![Cursor](https://img.shields.io/badge/Cursor-supported-blueviolet.svg)](#支持的语言)
+[![Codex](https://img.shields.io/badge/Codex-supported-blueviolet.svg)](#支持的语言)
+[![opencode](https://img.shields.io/badge/opencode-supported-blueviolet.svg)](#支持的语言)
+[![Gemini](https://img.shields.io/badge/Gemini-supported-blueviolet.svg)](#支持的语言)
+[![Kiro](https://img.shields.io/badge/Kiro-supported-blueviolet.svg)](#支持的语言)
 
 [English](README.en.md) | **中文**
 
 </div>
 
-CodeGraph 是一个基于 tree-sitter 的知识图谱引擎，它将代码库中的每个符号、调用、导入和继承关系索引到本地 SQLite 数据库中。AI 编程助手（Claude Code、Cursor、Codex CLI）可直接查询它，替代 grep/read 循环——更快、更省。
-
-此分支新增了 **ArkTS 语言完整支持**，用于鸿蒙（HarmonyOS）应用开发。
+CodeGraph 是一个基于 tree-sitter 的知识图谱引擎，它将代码库中的每个符号、调用、导入和继承关系索引到本地 SQLite 数据库中。AI 编程助手可直接查询它，替代 grep/read 循环——更快、更省。本分支新增了 **ArkTS 语言完整支持**，用于鸿蒙（HarmonyOS）应用开发，并持续同步上游 v1.0.0 新特性。
 
 ## 新增特性
 
@@ -61,7 +71,16 @@ CodeGraph 是一个基于 tree-sitter 的知识图谱引擎，它将代码库中
 | Swift | `.swift` | 完整支持 |
 | Kotlin | `.kt`, `.kts` | 完整支持 |
 | Dart | `.dart` | 完整支持 |
-| 另加 8 种 | 见上游 CodeGraph | 完整支持 |
+| Lua / Luau | `.lua`, `.luau` | 完整支持 |
+| R | `.r` | 完整支持 |
+| Scala | `.scala`, `.sc` | 完整支持 |
+| Pascal / Delphi | `.pas`, `.dpr`, `.dpk` | 完整支持 |
+| Astro | `.astro` | 完整支持 |
+| Svelte | `.svelte` | 模板 + 脚本分片 |
+| Vue | `.vue` | 模板 + 脚本分片 |
+| ASP.NET Razor / Blazor | `.cshtml`, `.razor` | 代码关系解析 |
+| Liquid | `.liquid` | Shopify 模板 |
+| Objective-C | `.m`, `.mm` | 完整支持 |
 
 ## 快速开始
 
