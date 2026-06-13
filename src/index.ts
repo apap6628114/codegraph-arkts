@@ -49,6 +49,7 @@ import { Mutex, FileLock } from './utils';
 import { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './sync';
 import { EXTRACTION_VERSION } from './extraction/extraction-version';
 import { getCodeGraphDir } from './directory';
+import { loadCodeGraphConfig } from './config';
 import { deriveProjectNameTokens } from './search/query-utils';
 import { CodeGraphPackageVersion } from './mcp/version';
 
@@ -121,6 +122,15 @@ export interface IndexOptions {
 
   /** Enable verbose logging (worker lifecycle, memory, timeouts) */
   verbose?: boolean;
+
+  /** Language IDs to restrict indexing to (overrides config.json) */
+  languages?: string[];
+
+  /** Glob patterns for files to force-include (overrides config.json) */
+  include?: string[];
+
+  /** Glob patterns for files to force-exclude (overrides config.json) */
+  exclude?: string[];
 }
 
 /**
@@ -342,7 +352,12 @@ export class CodeGraph {
       }
       try {
         const before = this.queries.getNodeAndEdgeCount();
-        const result = await this.orchestrator.indexAll(options.onProgress, options.signal, options.verbose);
+        const result = await this.orchestrator.indexAll(
+          options.onProgress,
+          options.signal,
+          options.verbose,
+          { languages: options.languages, include: options.include, exclude: options.exclude },
+        );
 
         // Re-detect frameworks now that the index is populated. The resolver
         // is constructed with createResolver() before any files exist, so
@@ -454,7 +469,10 @@ export class CodeGraph {
         return { filesChecked: 0, filesAdded: 0, filesModified: 0, filesRemoved: 0, nodesUpdated: 0, durationMs: 0 };
       }
       try {
-        const result = await this.orchestrator.sync(options.onProgress);
+        const result = await this.orchestrator.sync(
+          options.onProgress,
+          { languages: options.languages, include: options.include, exclude: options.exclude },
+        );
 
         // Cross-file finalization (e.g. NestJS RouterModule prefixes). Run on
         // every sync that touched files so edits to `app.module.ts` propagate
@@ -546,6 +564,18 @@ export class CodeGraph {
   watch(options: WatchOptions = {}): boolean {
     if (this.watcher?.isActive()) return true;
 
+    // Merge config.json exclude patterns into watcher options so the
+    // watcher's scope ignore matches the indexer's.
+    const mergedOptions = { ...options };
+    if (!mergedOptions.extraIgnorePatterns) {
+      try {
+        const config = loadCodeGraphConfig(this.projectRoot);
+        if (config.exclude && config.exclude.length > 0) {
+          mergedOptions.extraIgnorePatterns = config.exclude;
+        }
+      } catch { /* best-effort */ }
+    }
+
     this.watcher = new FileWatcher(
       this.projectRoot,
       async () => {
@@ -561,7 +591,7 @@ export class CodeGraph {
         const filesChanged = result.filesAdded + result.filesModified + result.filesRemoved;
         return { filesChanged, durationMs: result.durationMs };
       },
-      options
+      mergedOptions
     );
 
     return this.watcher.start();
@@ -1135,6 +1165,10 @@ export class CodeGraph {
     removeDirectory(this.projectRoot);
   }
 }
+
+// Config re-exports
+export { type CodeGraphConfig } from './config';
+export { loadCodeGraphConfig } from './config';
 
 // Default export
 export default CodeGraph;

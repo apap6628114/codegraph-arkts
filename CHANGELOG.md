@@ -20,6 +20,10 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### New Features
+
+- **Optional `.codegraph/config.json` with `languages`, `include`, and `exclude`** — restrict indexing to specific languages, force-include files that `.gitignore` would normally skip, or add extra exclusion patterns on top of `.gitignore`. All three fields are optional; the file lives in `.codegraph/config.json` and is never required. `include` patterns bypass `.gitignore` and built-in defaults (but not `exclude` or `languages`); `exclude` is highest priority. The `IndexOptions` object and `WatchOptions` accept matching overrides for programmatic control.
+
 
 ## [1.0.0] - 2026-06-12
 

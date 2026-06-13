@@ -17,13 +17,14 @@ import {
 } from '../types';
 import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
-import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
+import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages, EXTENSION_MAP } from './grammars';
 import { isCodeGraphDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
 import { validatePathWithinRoot, normalizePath } from '../utils';
 import ignore, { Ignore } from 'ignore';
 import { detectFrameworks } from '../resolution/frameworks';
 import type { ResolutionContext } from '../resolution/types';
+import { loadCodeGraphConfig, type CodeGraphConfig } from '../config';
 
 /**
  * Number of files to read in parallel during indexing.
@@ -162,6 +163,100 @@ const DEFAULT_IGNORE_PATTERNS: string[] = [
   'bazel-*/',        // Bazel output symlink trees
 ];
 
+/**
+ * Compiled file filter derived from `.codegraph/config.json`.
+ * Used by scan / sync / watch to restrict which files are indexed.
+ */
+export interface FileFilter {
+  /** Languages to allow (null = all). Extension-based, cheap — checked before file read. */
+  allowedLanguages: ReadonlySet<Language> | null;
+  /** Compiled include matcher (null = no include patterns). Matching files bypass .gitignore. */
+  includeMatcher: Ignore | null;
+  /** Compiled exclude matcher (null = no exclude patterns). Highest priority filter. */
+  excludeMatcher: Ignore | null;
+  /** Raw exclude patterns for directory-level filtering (passed to ignore matcher). */
+  excludePatterns?: string[];
+}
+
+/**
+ * Compile a {@link FileFilter} from config values.
+ * Language IDs that don't map to a known {@link Language} are silently ignored
+ * (they'll never match any file extension).
+ */
+export function compileFileFilter(config: CodeGraphConfig): FileFilter {
+  const validLanguages = config.languages?.length
+    ? new Set(config.languages.filter((l) => LANG_IDS.has(l)) as Language[])
+    : null;
+
+  const includeMatcher = config.include?.length
+    ? ignore().add(config.include)
+    : null;
+
+  const excludeMatcher = config.exclude?.length
+    ? ignore().add(config.exclude)
+    : null;
+
+  return {
+    allowedLanguages: validLanguages && validLanguages.size > 0 ? validLanguages : null,
+    includeMatcher,
+    excludeMatcher,
+    excludePatterns: config.exclude?.length ? config.exclude : undefined,
+  };
+}
+
+/** Set of all valid language ID strings for fast lookup. */
+const LANG_IDS: ReadonlySet<string> = new Set([
+  'typescript', 'tsx', 'javascript', 'jsx', 'python', 'go', 'rust', 'java',
+  'arkts', 'c', 'cpp', 'csharp', 'razor', 'php', 'ruby', 'swift', 'kotlin',
+  'dart', 'svelte', 'vue', 'astro', 'liquid', 'pascal', 'scala', 'lua',
+  'luau', 'objc', 'r', 'yaml', 'twig', 'xml', 'properties', 'unknown',
+]);
+
+/**
+ * Check whether a file's extension-based language is in the allowed set.
+ *
+ * Extension-only check (doesn't read content) so it's fast enough to run
+ * during directory scanning. `.h` files are ambiguous between C, C++, and
+ * ObjC — they're allowed when any of the three is permitted.
+ */
+function isLanguageAllowed(filePath: string, allowedLanguages: ReadonlySet<Language>): boolean {
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  const ext = filePath.slice(dot).toLowerCase();
+  const lang = EXTENSION_MAP[ext];
+  if (!lang) return false;
+  if (lang === 'c' && ext === '.h') {
+    return (allowedLanguages as ReadonlySet<string>).has('c')
+      || (allowedLanguages as ReadonlySet<string>).has('cpp')
+      || (allowedLanguages as ReadonlySet<string>).has('objc');
+  }
+  return (allowedLanguages as ReadonlySet<string>).has(lang);
+}
+
+/**
+ * Decide whether a file should be indexed.
+ *
+ * Priority chain (first match wins):
+ *   1. Not a recognized source file → skip
+ *   2. Matches exclude pattern → skip (highest priority)
+ *   3. Language not allowed → skip
+ *   4. Matches include pattern → index (bypasses .gitignore + defaults)
+ *   5. Ignored by .gitignore or built-in defaults → skip
+ *   6. Otherwise → index
+ */
+function shouldProcessFile(
+  filePath: string,
+  filter: FileFilter,
+  isIgnoredFn: (path: string) => boolean,
+): boolean {
+  if (!isSourceFile(filePath)) return false;
+  if (filter.excludeMatcher?.ignores(filePath)) return false;
+  if (filter.allowedLanguages && !isLanguageAllowed(filePath, filter.allowedLanguages)) return false;
+  if (filter.includeMatcher?.ignores(filePath)) return true;
+  if (isIgnoredFn(filePath)) return false;
+  return true;
+}
+
 /** True if `buf` decodes as strict UTF-8 (no invalid byte sequences). */
 function isValidUtf8(buf: Buffer): boolean {
   try {
@@ -241,10 +336,11 @@ function readGitignorePatterns(giPath: string): string {
  * the defaults apply to tracked files too (committing a dependency dir doesn't make
  * it project code; the explicit `.gitignore` negation is the only opt-in).
  */
-export function buildDefaultIgnore(rootDir: string): Ignore {
+export function buildDefaultIgnore(rootDir: string, extraPatterns?: string[]): Ignore {
   const ig = ignore().add(DEFAULT_IGNORE_PATTERNS);
   const rootGitignore = path.join(rootDir, '.gitignore');
   if (fs.existsSync(rootGitignore)) ig.add(readGitignorePatterns(rootGitignore));
+  if (extraPatterns && extraPatterns.length > 0) ig.add(extraPatterns);
   return ig;
 }
 
@@ -367,10 +463,10 @@ export class ScopeIgnore {
  * embedded roots (the scanner discovers them during collection), pass them to
  * skip rediscovery; otherwise they're discovered here (the watcher path).
  */
-export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<string>): ScopeIgnore {
+export function buildScopeIgnore(rootDir: string, embeddedRoots?: Iterable<string>, extraPatterns?: string[]): ScopeIgnore {
   const roots = embeddedRoots ? [...embeddedRoots] : discoverEmbeddedRepoRoots(rootDir);
   return new ScopeIgnore(
-    buildDefaultIgnore(rootDir),
+    buildDefaultIgnore(rootDir, extraPatterns),
     roots.map((root) => ({ root, matcher: buildDefaultIgnore(path.join(rootDir, root)) })),
   );
 }
@@ -499,7 +595,7 @@ function collectGitFiles(repoDir: string, prefix: string, files: Set<string>, em
  * embedded (nested, non-submodule) git repos. Returns null on failure
  * (non-git project) so callers can fall back to a filesystem walk.
  */
-function getGitVisibleFiles(rootDir: string): Set<string> | null {
+function getGitVisibleFiles(rootDir: string, filter?: FileFilter, extraPatterns?: string[]): Set<string> | null {
   try {
     // Check if the project directory is gitignored by a parent repo.
     // When rootDir lives inside a parent git repo that ignores it,
@@ -534,8 +630,17 @@ function getGitVisibleFiles(rootDir: string): Set<string> | null {
     // Files inside an EMBEDDED repo are matched against that repo's own rules,
     // not the parent's: the parent's .gitignore hides the child repo from git,
     // not from the index. (#514)
-    const ig = buildScopeIgnore(rootDir, embeddedRoots);
-    return new Set([...files].filter((f) => !ig.ignores(f)));
+    const ig = buildScopeIgnore(rootDir, embeddedRoots, extraPatterns);
+
+    if (!filter || (!filter.allowedLanguages && !filter.includeMatcher && !filter.excludeMatcher)) {
+      // No user-defined filter — use fast path with only isSourceFile + scope ignore
+      return new Set([...files].filter((f) => isSourceFile(f) && !ig.ignores(f)));
+    }
+
+    // User-defined filter: apply shouldProcessFile logic.
+    // Git files are already filtered by .gitignore, so isIgnoredFn checks only
+    // the built-in defaults (already in the scope matcher).
+    return new Set([...files].filter((f) => shouldProcessFile(f, filter, (p) => ig.ignores(p))));
   } catch {
     return null;
   }
@@ -630,25 +735,24 @@ function collectGitStatus(repoDir: string, prefix: string, out: GitChanges): voi
  */
 export function scanDirectory(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  filter?: FileFilter,
 ): string[] {
   // Fast path: use git to get all visible files (respects .gitignore everywhere)
-  const gitFiles = getGitVisibleFiles(rootDir);
+  const gitFiles = getGitVisibleFiles(rootDir, filter, filter?.excludeMatcher ? undefined : undefined);
   if (gitFiles) {
     const files: string[] = [];
     let count = 0;
     for (const filePath of gitFiles) {
-      if (isSourceFile(filePath)) {
-        files.push(filePath);
-        count++;
-        onProgress?.(count, filePath);
-      }
+      files.push(filePath);
+      count++;
+      onProgress?.(count, filePath);
     }
     return files;
   }
 
   // Fallback: walk filesystem for non-git projects
-  return scanDirectoryWalk(rootDir, onProgress);
+  return scanDirectoryWalk(rootDir, onProgress, filter);
 }
 
 /**
@@ -657,27 +761,26 @@ export function scanDirectory(
  */
 export async function scanDirectoryAsync(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  filter?: FileFilter,
 ): Promise<string[]> {
-  const gitFiles = getGitVisibleFiles(rootDir);
+  const gitFiles = getGitVisibleFiles(rootDir, filter);
   if (gitFiles) {
     const files: string[] = [];
     let count = 0;
     for (const filePath of gitFiles) {
-      if (isSourceFile(filePath)) {
-        files.push(filePath);
-        count++;
-        onProgress?.(count, filePath);
-        // Yield every 100 files so worker threads can render progress
-        if (count % 100 === 0) {
-          await new Promise<void>(r => setImmediate(r));
-        }
+      files.push(filePath);
+      count++;
+      onProgress?.(count, filePath);
+      // Yield every 100 files so worker threads can render progress
+      if (count % 100 === 0) {
+        await new Promise<void>(r => setImmediate(r));
       }
     }
     return files;
   }
 
-  return scanDirectoryWalk(rootDir, onProgress);
+  return scanDirectoryWalk(rootDir, onProgress, filter);
 }
 
 /**
@@ -685,7 +788,8 @@ export async function scanDirectoryAsync(
  */
 function scanDirectoryWalk(
   rootDir: string,
-  onProgress?: (current: number, file: string) => void
+  onProgress?: (current: number, file: string) => void,
+  filter?: FileFilter,
 ): string[] {
   const files: string[] = [];
   let count = 0;
@@ -718,6 +822,22 @@ function scanDirectoryWalk(
       if (ig.ignores(rel)) return true;
     }
     return false;
+  };
+
+  /**
+   * Check whether a file should be indexed. When `filter` is present, the
+   * include patterns can bypass `.gitignore` / built-in defaults (priority
+   * chain: exclude → language → include → ignore).
+   */
+  const checkFile = (relPath: string, fullPath: string, active: ScopedIgnore[]): boolean => {
+    if (!isSourceFile(relPath)) return false;
+    if (filter) {
+      if (filter.excludeMatcher?.ignores(relPath)) return false;
+      if (filter.allowedLanguages && !isLanguageAllowed(relPath, filter.allowedLanguages)) return false;
+      if (filter.includeMatcher?.ignores(relPath)) return true; // bypass .gitignore + defaults
+    }
+    if (isIgnored(fullPath, false, active)) return false;
+    return true;
   };
 
   function walk(dir: string, matchers: ScopedIgnore[]): void {
@@ -766,7 +886,7 @@ function scanDirectoryWalk(
               walk(fullPath, active);
             }
           } else if (stat.isFile()) {
-            if (!isIgnored(fullPath, false, active) && isSourceFile(relativePath)) {
+            if (checkFile(relativePath, fullPath, active)) {
               files.push(relativePath);
               count++;
               onProgress?.(count, relativePath);
@@ -783,7 +903,7 @@ function scanDirectoryWalk(
           walk(fullPath, active);
         }
       } else if (entry.isFile()) {
-        if (!isIgnored(fullPath, false, active) && isSourceFile(relativePath)) {
+        if (checkFile(relativePath, fullPath, active)) {
           files.push(relativePath);
           count++;
           onProgress?.(count, relativePath);
@@ -793,8 +913,10 @@ function scanDirectoryWalk(
   }
 
   // Seed a base matcher with the built-in default ignores (merged with the root
-  // .gitignore so a negation can override). Nested .gitignores still layer per-dir.
-  walk(rootDir, [{ dir: rootDir, ig: buildDefaultIgnore(rootDir) }]);
+  // .gitignore so a negation can override). User-defined exclude patterns are
+  // merged into the root matcher so excluded directories aren't descended into.
+  // Nested .gitignores still layer per-dir.
+  walk(rootDir, [{ dir: rootDir, ig: buildDefaultIgnore(rootDir, filter?.excludePatterns) }]);
   return files;
 }
 
@@ -804,6 +926,8 @@ function scanDirectoryWalk(
 export class ExtractionOrchestrator {
   private rootDir: string;
   private queries: QueryBuilder;
+  /** Loaded `.codegraph/config.json` (empty object when absent). */
+  private config: CodeGraphConfig;
   /**
    * Names of frameworks detected for this project, populated by indexAll().
    * Passed to extractFromSource so framework-specific extractors (route nodes,
@@ -815,6 +939,20 @@ export class ExtractionOrchestrator {
   constructor(rootDir: string, queries: QueryBuilder) {
     this.rootDir = rootDir;
     this.queries = queries;
+    this.config = loadCodeGraphConfig(rootDir);
+  }
+
+  /**
+   * Build a {@link FileFilter} from config + optional overrides.
+   * Programmatic overrides (from {@link IndexOptions}) take precedence over
+   * config.json values.
+   */
+  buildFileFilter(overrides?: { languages?: string[]; include?: string[]; exclude?: string[] }): FileFilter {
+    return compileFileFilter({
+      languages: overrides?.languages ?? this.config.languages,
+      include: overrides?.include ?? this.config.include,
+      exclude: overrides?.exclude ?? this.config.exclude,
+    });
   }
 
   /**
@@ -880,7 +1018,8 @@ export class ExtractionOrchestrator {
    */
   private ensureDetectedFrameworks(files?: string[]): string[] {
     if (this.detectedFrameworkNames !== null) return this.detectedFrameworkNames;
-    const fileList = files ?? scanDirectory(this.rootDir);
+    const filter = this.buildFileFilter();
+    const fileList = files ?? scanDirectory(this.rootDir, undefined, filter);
     const context = this.buildDetectionContext(fileList);
     this.detectedFrameworkNames = detectFrameworks(context).map((r) => r.name);
     return this.detectedFrameworkNames;
@@ -892,7 +1031,8 @@ export class ExtractionOrchestrator {
   async indexAll(
     onProgress?: (progress: IndexProgress) => void,
     signal?: AbortSignal,
-    verbose?: boolean
+    verbose?: boolean,
+    configOverrides?: { languages?: string[]; include?: string[]; exclude?: string[] }
   ): Promise<IndexResult> {
     await initGrammars();
     const startTime = Date.now();
@@ -906,6 +1046,9 @@ export class ExtractionOrchestrator {
     const log = verbose
       ? (msg: string) => { console.log(`[worker] ${msg}`); }
       : (_msg: string) => {};
+
+    // Build filter from config + programmatic overrides
+    const filter = this.buildFileFilter(configOverrides);
 
     // Phase 1: Scan for files
     onProgress?.({
@@ -921,7 +1064,7 @@ export class ExtractionOrchestrator {
         total: 0,
         currentFile: file,
       });
-    });
+    }, filter);
 
     // Detect frameworks once per indexAll run using the scanned file list.
     // Names are passed to each parse call so framework-specific extractors
@@ -1623,7 +1766,10 @@ export class ExtractionOrchestrator {
    * changes. This works in non-git projects and catches committed changes from
    * `git pull`/`checkout`/`merge`/`rebase` that `git status` cannot see.
    */
-  async sync(onProgress?: (progress: IndexProgress) => void): Promise<SyncResult> {
+  async sync(
+    onProgress?: (progress: IndexProgress) => void,
+    configOverrides?: { languages?: string[]; include?: string[]; exclude?: string[] },
+  ): Promise<SyncResult> {
     await initGrammars(); // Initialize WASM runtime (grammars loaded lazily below)
     const startTime = Date.now();
     let filesChecked = 0;
@@ -1641,6 +1787,8 @@ export class ExtractionOrchestrator {
 
     const filesToIndex: string[] = [];
     // === Filesystem reconcile (git-independent) ===
+    const filter = this.buildFileFilter(configOverrides);
+
     // The source of truth for "what changed" is the filesystem vs the indexed
     // state — never git. We enumerate the current source files and reconcile
     // each against the DB. A cheap (size, mtime) stat pre-filter skips unchanged
@@ -1649,7 +1797,7 @@ export class ExtractionOrchestrator {
     // whether or not the project uses git, and crucially also catches committed
     // changes from `git pull`/`checkout`/`merge`/`rebase` — which `git status`
     // cannot see, because the working tree is clean afterward.
-    const currentFiles = scanDirectory(this.rootDir);
+    const currentFiles = scanDirectory(this.rootDir, undefined, filter);
     filesChecked = currentFiles.length;
     const currentSet = new Set(currentFiles);
 
@@ -1753,6 +1901,7 @@ export class ExtractionOrchestrator {
    * Uses git status as a fast path when available, falling back to full scan.
    */
   getChangedFiles(): { added: string[]; modified: string[]; removed: string[] } {
+    const filter = this.buildFileFilter();
     const gitChanges = getGitChangedFiles(this.rootDir);
 
     if (gitChanges) {
@@ -1769,11 +1918,15 @@ export class ExtractionOrchestrator {
         }
       }
 
-      // Modified + added files — read + hash, compare with DB. Untracked (`??`)
-      // files stay untracked in git even after indexing, so they must be
-      // hash-compared like modified files instead of always counting as added —
-      // otherwise status reports them as pending forever. (See issue #206.)
+      // Modified + added files — apply config filter, then read + hash,
+      // compare with DB. Untracked (`??`) files stay untracked in git even
+      // after indexing, so they must be hash-compared like modified files
+      // instead of always counting as added — otherwise status reports them
+      // as pending forever. (See issue #206.)
       for (const filePath of [...gitChanges.modified, ...gitChanges.added]) {
+        // Apply user-defined filter (exclude → language → include). Since git
+        // already handled .gitignore, we pass a no-op ignore function.
+        if (filter && !shouldProcessFile(filePath, filter, () => false)) continue;
         const fullPath = path.join(this.rootDir, filePath);
         let content: string;
         try {
@@ -1797,7 +1950,7 @@ export class ExtractionOrchestrator {
     }
 
     // === Fallback: full scan (non-git project or git failure) ===
-    const currentFiles = new Set(scanDirectory(this.rootDir));
+    const currentFiles = new Set(scanDirectory(this.rootDir, undefined, filter));
     const trackedFiles = this.queries.getAllFiles();
 
     // Build Map for O(1) lookups
