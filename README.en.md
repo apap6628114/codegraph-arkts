@@ -2,20 +2,32 @@
 
 # CodeGraph-ArkTS
 
-### CodeGraph Fork — ArkTS / HarmonyOS Support
+### CodeGraph Fork — ArkTS / HarmonyOS Support · Synced to upstream v1.0.0
 
-**Pre-indexed semantic code knowledge graph for ArkTS, TypeScript, and 20+ languages.**
+**Pre-indexed semantic code knowledge graph for ArkTS, TypeScript, and 24+ languages.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Forked from colbymchenry/codegraph](https://img.shields.io/badge/fork-colbymchenry%2Fcodegraph-blue)](https://github.com/colbymchenry/codegraph)
+[![Sync: v1.0.0](https://img.shields.io/badge/sync-v1.0.0-brightgreen)](https://github.com/colbymchenry/codegraph)
+
+[![Windows](https://img.shields.io/badge/Windows-supported-blue.svg)](#supported-languages)
+[![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#supported-languages)
+[![Linux](https://img.shields.io/badge/Linux-supported-blue.svg)](#supported-languages)
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-supported-blueviolet.svg)](#supported-languages)
+[![Cursor](https://img.shields.io/badge/Cursor-supported-blueviolet.svg)](#supported-languages)
+[![Codex](https://img.shields.io/badge/Codex-supported-blueviolet.svg)](#supported-languages)
+[![opencode](https://img.shields.io/badge/opencode-supported-blueviolet.svg)](#supported-languages)
+[![Gemini](https://img.shields.io/badge/Gemini-supported-blueviolet.svg)](#supported-languages)
+[![Kiro](https://img.shields.io/badge/Kiro-supported-blueviolet.svg)](#supported-languages)
 
 **English** | [中文](README.md)
 
 </div>
 
-CodeGraph is a tree-sitter-powered knowledge graph engine that indexes every symbol, call, import, and inheritance edge in your codebase into a local SQLite database. AI coding agents (Claude Code, Cursor, Codex CLI) query it directly instead of grep/read loops — faster and cheaper.
+CodeGraph is a tree-sitter-powered knowledge graph engine that indexes every symbol, call, import, and inheritance edge in your codebase into a local SQLite database. AI coding agents query it directly instead of grep/read loops — faster and cheaper.
 
-This fork adds **full ArkTS language support** for HarmonyOS application development.
+This fork adds **full ArkTS language support** for HarmonyOS application development, and continuously syncs upstream v1.0.0 features.
 
 ## What's Added
 
@@ -61,7 +73,16 @@ This fork adds **full ArkTS language support** for HarmonyOS application develop
 | Swift | `.swift` | Full support |
 | Kotlin | `.kt`, `.kts` | Full support |
 | Dart | `.dart` | Full support |
-| Plus 8 more | See original CodeGraph | Full support |
+| Lua / Luau | `.lua`, `.luau` | Full support |
+| R | `.r` | Full support |
+| Scala | `.scala`, `.sc` | Full support |
+| Pascal / Delphi | `.pas`, `.dpr`, `.dpk` | Full support |
+| Astro | `.astro` | Full support |
+| Svelte | `.svelte` | Template + script sharding |
+| Vue | `.vue` | Template + script sharding |
+| ASP.NET Razor / Blazor | `.cshtml`, `.razor` | Code relationship resolution |
+| Liquid | `.liquid` | Shopify templates |
+| Objective-C | `.m`, `.mm` | Full support |
 
 ## Quick Start
 
@@ -72,7 +93,7 @@ This fork adds **full ArkTS language support** for HarmonyOS application develop
 
 ### Install & Initialize
 
-This fork is used from source and is not published to npm:
+This fork is used from source:
 
 ```bash
 # 1. Build this fork
@@ -80,15 +101,20 @@ cd codegraph-arkts
 npm install
 npm run build
 
-# 2. Initialize in your project
+# 2. Initialize and index in your project
 node dist/bin/codegraph.js init /path/to/your/project
 
-# 3. Index all files
-node dist/bin/codegraph.js index /path/to/your/project
-
-# 4. Install the MCP server (Claude Code example, project-local)
+# 3. Install the MCP server to connect your AI coding agents
+#    Auto-detects and configures Claude Code, Cursor, Codex CLI, opencode, Gemini CLI, Kiro
 node dist/bin/codegraph.js install --location=local --yes
+
+# 4. Start serving, auto-sync enabled
+node dist/bin/codegraph.js serve --mcp
 ```
+
+> **Auto-sync**: After running `codegraph init`, the file watcher automatically tracks source changes (native OS events with 2s debounce), keeping the graph always up-to-date — no manual re-indexing needed.
+
+> **Upgrade**: Upstream is at v1.0.0. To update this fork, run `git pull origin main` (or merge the upstream branch), then rebuild.
 
 ### MCP Server Configuration
 
@@ -174,7 +200,7 @@ npm run build:wasm-arkts -- /path/to/tree-sitter-arkts
 
 Prerequisites: Node.js (for `npx tree-sitter-cli`). The script clones nothing automatically — you must have the source locally.
 
-See the [original README](https://github.com/colbymchenry/codegraph) for full CLI reference, framework-aware routes, benchmark results, and troubleshooting.
+See the [original README](https://github.com/colbymchenry/codegraph) for full CLI reference, framework-aware routes, benchmark results (v1.0.0: ~16% cheaper, ~58% fewer tool calls vs without CodeGraph across 7 repos), and troubleshooting.
 
 ## License
 
