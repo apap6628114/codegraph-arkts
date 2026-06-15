@@ -24,6 +24,32 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Optional `.codegraph/config.json` with `languages`, `include`, and `exclude`** — restrict indexing to specific languages, force-include files that `.gitignore` would normally skip, or add extra exclusion patterns on top of `.gitignore`. All three fields are optional; the file lives in `.codegraph/config.json` and is never required. `include` patterns bypass `.gitignore` and built-in defaults (but not `exclude` or `languages`); `exclude` is highest priority. The `IndexOptions` object and `WatchOptions` accept matching overrides for programmatic control.
 
+- Impact and blast-radius analysis for TypeScript/JavaScript now understands the readers of a constant. When you change a file-scope `const`/`var` — a config object, a lookup table, a shared constant — the other symbols in that file that read it now show up as affected, where before they were invisible (impact only followed calls, imports, and inheritance, so a constant's consumers looked like "nothing depends on this"). This makes `codegraph impact`, and the impact trail in `codegraph_explore`/`codegraph_node`, catch the "change this table, break its readers" class of change. It's on by default for TS/JS and adds no nodes to your graph; bundled/minified files and ambiguously-shadowed names are skipped to keep results precise. Set `CODEGRAPH_VALUE_REFS=0` to turn it off.
+
+### Fixes
+
+- `codegraph index` now rebuilds the full graph from scratch, so it produces the same result as a fresh `codegraph init` instead of reporting "0 nodes, 0 edges" and looking like it wiped your index. Previously, re-running `index` on an unchanged project skipped every file (their contents hadn't changed) and showed an empty-looking summary; it now clears and re-indexes for an honest, complete rebuild every time. Use `codegraph sync` for fast incremental updates between full rebuilds. Thanks @Arc-univer. (#874)
+- The file watcher that auto-syncs the graph now fails cleanly when live watching can no longer be trusted, instead of looking healthy while the index quietly goes stale. If the operating system runs out of file-watch resources, or another process holds the write lock far longer than a normal save, CodeGraph now disables auto-sync once — with a single clear message telling you to run `codegraph sync` (or rely on the git sync hooks) to refresh — rather than retrying forever or repeating the same error on a loop. And while auto-sync is disabled, CodeGraph's tool responses (and `codegraph status`) now say so plainly, so your AI agent knows to read files directly instead of trusting a frozen index. This mostly matters for long-running MCP/daemon sessions, which could otherwise keep serving stale results while appearing to work. Thanks @thismilktea. (#876)
+- On Linux, hitting the kernel's inotify watch limit on a large project no longer silently leaves half the tree unwatched. CodeGraph now tells you once — naming the exact setting to raise (`fs.inotify.max_user_watches`, e.g. `sudo sysctl fs.inotify.max_user_watches=1048576`) — and keeps live-watching the directories it could register while `codegraph sync` (or the git sync hooks) covers the rest. (#876)
+
+
+## [1.0.1] - 2026-06-13
+
+### New Features
+
+- New `codegraph daemon` command (alias `daemons`) — an interactive manager for the background daemons. It shows what's running (your current project's daemon first, pre-selected), and you arrow-key to one and press enter to stop it, or pick "Stop all". Previously the only way to shut a daemon down was to hunt for its pid and `kill` it by hand. (#845)
+- Checking your installed version is now easy to reach however you guess at it: `codegraph version`, `codegraph -v`, and `codegraph -version` all print it, alongside the existing `codegraph --version`. (#864)
+- The CodeGraph MCP server now self-heals if its main thread ever locks up. A lightweight watchdog notices when the process has stopped responding and stops it so a fresh one starts on your next request — it can no longer sit pinned at 100% CPU with no way to recover. Tune the detection window with `CODEGRAPH_WATCHDOG_TIMEOUT_MS`, or turn it off entirely with `CODEGRAPH_NO_WATCHDOG=1`. (#850)
+
+### Fixes
+
+- Git worktrees nested inside your project — like the `.claude/worktrees/` that Claude Code creates — are no longer indexed as duplicate copies of your whole codebase. CodeGraph deliberately indexes genuine embedded repos (a real second project checked out inside yours), but a worktree is just another working view of a repo it already indexed, so each one was multiplying every symbol — one report went from ~1,850 files to over 24,000, with search and `explore` flooded by stale duplicates. CodeGraph now recognizes worktrees and skips them, while still indexing real embedded repos and submodules. Thanks @tphakala. (#848)
+- Running `codegraph serve --mcp` by hand no longer just hangs in silence. That command is the MCP server your AI agent starts for itself — not a step you run directly — and in a terminal it used to sit there waiting for input that never comes, looking broken. It now recognizes when a person runs it and explains what to do instead (`codegraph status`, `codegraph daemon`), and it's been dropped from the command listing so it stops looking like something you need to launch.
+- Cross-file static method calls like `ClassName.staticMethod()` now resolve correctly. CodeGraph was linking the call to the *class* instead of the method (and recording it as a construction), so `callers` and `impact` for a static method came back empty — a real blind spot in TypeScript and JavaScript codebases that lean on static utility classes (Python and other languages with the same call shape benefit too). The call now links to the method itself. Thanks @contextFlow-lab. (#825)
+- `codegraph affected` now accepts `./`-prefixed and absolute file paths, not just bare project-relative ones. Passing `./src/x.ts` or an absolute path — common when the file list comes from another tool — used to silently match nothing and report no affected tests. Thanks @contextFlow-lab. (#825)
+- The CodeGraph MCP server no longer risks getting stuck at 100% CPU after an unexpected internal error. Previously such an error was logged but the process was left running in a broken state, where it could spin a CPU core indefinitely and had to be killed by hand. The server now logs the error and exits cleanly, so a fresh one starts on the next request. Thanks @songhlc. (#850)
+- CodeGraph no longer indexes your entire home directory by accident. Running the installer — or `codegraph init` / `codegraph index` — from your home folder or a filesystem root would index everything underneath it (caches, `Library`, every other project), producing a multi-gigabyte index and constant file-watching churn. CodeGraph now refuses these roots and points you at a specific project instead; pass `--force` if you genuinely mean to. (Combined with the macOS file-descriptor fix already in 1.0.0, this closes the report of a runaway watcher exhausting the system file limit.) Thanks @ligson. (#845)
+
 
 ## [1.0.0] - 2026-06-12
 
@@ -408,3 +434,4 @@ Thanks @andreinknv for the substantive draft this release was based on.
 [0.9.8]: https://github.com/colbymchenry/codegraph/releases/tag/v0.9.8
 [0.9.9]: https://github.com/colbymchenry/codegraph/releases/tag/v0.9.9
 [1.0.0]: https://github.com/colbymchenry/codegraph/releases/tag/v1.0.0
+[1.0.1]: https://github.com/colbymchenry/codegraph/releases/tag/v1.0.1
