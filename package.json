@@ -1,6 +1,6 @@
 {
   "name": "codegraph-arkts",
-  "version": "0.9.9",
+  "version": "1.0.1",
   "description": "CodeGraph fork with ArkTS/HarmonyOS support — semantic code intelligence for Claude Code, Cursor, Codex CLI.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
