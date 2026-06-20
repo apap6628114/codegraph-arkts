@@ -17,6 +17,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Type annotation widening** — ArkTS added to the set of languages that support typed variable declarations and type annotation edges.
 - **WASM build script** — `scripts/build-wasm-arkts.sh` to rebuild the grammar WASM from a local `tree-sitter-arkts` source checkout.
 - **`better-sqlite3` fallback** — SQLite adapter now falls back to `better-sqlite3` when `node:sqlite` is available but lacks the FTS5 extension (notably some Windows Node distributions).
+- **ArkTS value-reference edges for impact analysis** — ArkTS now participates in same-file value-reference impact analysis (extends upstream #897 to ArkTS): changing a file-scope `const` — a config object, lookup table, or shared constant — surfaces the functions that read it in `codegraph impact` and the `codegraph_explore`/`codegraph_node` impact trail. Edges-only (adds no nodes); on by default, `CODEGRAPH_VALUE_REFS=0` opts out. Also taught the value-ref body scan to follow `export function` bodies, which ArkTS parses as `function_signature` with the `statement_block` body as a sibling of the enclosing `export_statement` (previously invisible to the scan, so no value-ref edges were emitted for ArkTS at all).
 
 ## [Unreleased]
 

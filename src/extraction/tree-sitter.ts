@@ -302,7 +302,7 @@ export class TreeSitterExtractor {
   // Value-reference edges (default ON; set CODEGRAPH_VALUE_REFS=0 to disable; see flushValueRefs).
   // Same-file reads of file-scope const/var symbols → `references` edges so impact analysis catches
   // value consumers ("change this constant/table, affect its readers").
-  private static readonly VALUE_REF_LANGS = new Set<string>(['typescript', 'javascript', 'tsx', 'go', 'python', 'rust', 'ruby', 'c', 'java', 'csharp', 'php', 'scala', 'kotlin', 'swift', 'dart', 'pascal']);
+  private static readonly VALUE_REF_LANGS = new Set<string>(['typescript', 'javascript', 'tsx', 'go', 'python', 'rust', 'ruby', 'c', 'java', 'csharp', 'php', 'scala', 'kotlin', 'swift', 'dart', 'pascal', 'arkts' /* fork: ArkTS (.ets) is a TS superset and reuses the TS `variable_declarator`/`identifier` path — no extra declarator cases needed */]);
   private static readonly MAX_VALUE_REF_NODES = 20_000;
   private readonly valueRefsEnabled = process.env.CODEGRAPH_VALUE_REFS !== '0';
   private fileScopeValues = new Map<string, string>();
@@ -757,16 +757,29 @@ export class TreeSitterExtractor {
     for (const scope of scopes) {
       const seen = new Set<string>();
       const stack: SyntaxNode[] = [scope.node];
-      // Dart and Pascal attach a function/method BODY as a *next sibling* of the
-      // signature node that is stored as the reader scope (Dart `method_signature`
-      // ← `function_body`; Pascal `declProc` ← `block`, both under a `defProc`),
-      // not as a child — so the scope subtree is just the signature and the reads
-      // live in the sibling. Pull it in. (A body as a next sibling of the scope
-      // node is unique to Dart/Pascal among the value-ref languages — every other
-      // grammar nests the body inside the function node — so this is inert
-      // elsewhere.)
+      // Pull in a function/method body that lives OUTSIDE the scope node's
+      // subtree, so reads inside the body are visible to the walk. Most grammars
+      // nest the body inside the function node (the subtree walk covers it), but
+      // ArkTS parses `export function` as a `function_signature` (signature only)
+      // whose `statement_block` body is a sibling of the enclosing
+      // `export_statement`, and Dart/Pascal keep the body as a sibling of the
+      // signature node. resolveBody knows each grammar's body shape, so prefer it
+      // and only push when the body is genuinely outside the scope node's span
+      // (otherwise the subtree walk already covers it and we'd double-walk). The
+      // legacy nextNamedSibling pull is kept as a fallback for grammars whose
+      // resolveBody doesn't handle the node; `sib !== resolvedBody` avoids a
+      // duplicate root when both resolve to the same sibling body.
+      const resolvedBody = this.extractor?.resolveBody?.(scope.node, this.extractor.bodyField);
+      if (
+        resolvedBody && resolvedBody !== scope.node &&
+        !(resolvedBody.startIndex >= scope.node.startIndex && resolvedBody.endIndex <= scope.node.endIndex)
+      ) {
+        stack.push(resolvedBody);
+      }
       const sib = scope.node.nextNamedSibling;
-      if (sib && (sib.type === 'function_body' || sib.type === 'block')) stack.push(sib);
+      if (sib && sib !== resolvedBody && (sib.type === 'function_body' || sib.type === 'block')) {
+        stack.push(sib);
+      }
       let visited = 0;
       while (stack.length > 0 && visited < TreeSitterExtractor.MAX_VALUE_REF_NODES) {
         const n = stack.pop()!;

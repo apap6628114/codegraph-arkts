@@ -64,6 +64,27 @@ describe('value-reference edges', () => {
     expect(readers).toEqual(expect.arrayContaining(['rowCount', 'describeTable', 'HEADER']));
   });
 
+  it('edges same-file readers to the file-scope const they read (ArkTS .ets)', async () => {
+    // ArkTS (.ets) is a TypeScript superset; once 'arkts' is in VALUE_REF_LANGS,
+    // a file-scope const's same-file readers should link via value-reference edges.
+    fs.writeFileSync(
+      path.join(dir, 'config.ets'),
+      [
+        'export const TABLE_CONFIG: Record<string, number> = { rows: 10, cols: 4 };',
+        'export function rowCount(): number { return TABLE_CONFIG.rows; }',
+        'export function describeTable(): string { return `${TABLE_CONFIG.rows}x${TABLE_CONFIG.cols}`; }',
+      ].join('\n'),
+    );
+    cg = await CodeGraph.init(dir);
+    await cg.indexAll();
+
+    // Sanity: the const was indexed as a node (proves the .ets file parsed).
+    expect(cg.searchNodes('TABLE_CONFIG').some((r) => r.node.name === 'TABLE_CONFIG')).toBe(true);
+
+    const readers = valueRefReaders(cg, 'TABLE_CONFIG');
+    expect(readers).toEqual(expect.arrayContaining(['rowCount', 'describeTable']));
+  });
+
   it('surfaces those readers in the impact radius of the const', async () => {
     fs.writeFileSync(
       path.join(dir, 'palette.ts'),
