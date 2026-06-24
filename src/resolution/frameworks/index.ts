@@ -20,6 +20,7 @@ import { railsResolver } from './ruby';
 import { springResolver } from './java';
 import { playResolver } from './play';
 import { goResolver } from './go';
+import { goframeResolver } from './goframe';
 import { rustResolver } from './rust';
 import { aspnetResolver } from './csharp';
 import { swiftUIResolver, uikitResolver, vaporResolver } from './swift';
@@ -54,6 +55,7 @@ const FRAMEWORK_RESOLVERS: FrameworkResolver[] = [
   playResolver,
   // Go
   goResolver,
+  goframeResolver,
   // Rust
   rustResolver,
   // C#
@@ -139,6 +141,7 @@ export { railsResolver } from './ruby';
 export { springResolver } from './java';
 export { playResolver } from './play';
 export { goResolver } from './go';
+export { goframeResolver } from './goframe';
 export { rustResolver } from './rust';
 export { aspnetResolver } from './csharp';
 export { swiftUIResolver, uikitResolver, vaporResolver } from './swift';
