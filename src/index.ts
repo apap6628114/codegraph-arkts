@@ -49,7 +49,6 @@ import { Mutex, FileLock } from './utils';
 import { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './sync';
 import { EXTRACTION_VERSION } from './extraction/extraction-version';
 import { getCodeGraphDir } from './directory';
-import { loadCodeGraphConfig } from './config';
 import { deriveProjectNameTokens } from './search/query-utils';
 import { CodeGraphPackageVersion } from './mcp/version';
 
@@ -122,15 +121,6 @@ export interface IndexOptions {
 
   /** Enable verbose logging (worker lifecycle, memory, timeouts) */
   verbose?: boolean;
-
-  /** Language IDs to restrict indexing to (overrides config.json) */
-  languages?: string[];
-
-  /** Glob patterns for files to force-include (overrides config.json) */
-  include?: string[];
-
-  /** Glob patterns for files to force-exclude (overrides config.json) */
-  exclude?: string[];
 }
 
 /**
@@ -400,7 +390,6 @@ export class CodeGraph {
           options.onProgress,
           options.signal,
           options.verbose,
-          { languages: options.languages, include: options.include, exclude: options.exclude },
         );
 
         // Re-detect frameworks now that the index is populated. The resolver
@@ -515,7 +504,6 @@ export class CodeGraph {
       try {
         const result = await this.orchestrator.sync(
           options.onProgress,
-          { languages: options.languages, include: options.include, exclude: options.exclude },
         );
 
         // Cross-file finalization (e.g. NestJS RouterModule prefixes). Run on
@@ -608,18 +596,6 @@ export class CodeGraph {
   watch(options: WatchOptions = {}): boolean {
     if (this.watcher?.isActive()) return true;
 
-    // Merge config.json exclude patterns into watcher options so the
-    // watcher's scope ignore matches the indexer's.
-    const mergedOptions = { ...options };
-    if (!mergedOptions.extraIgnorePatterns) {
-      try {
-        const config = loadCodeGraphConfig(this.projectRoot);
-        if (config.exclude && config.exclude.length > 0) {
-          mergedOptions.extraIgnorePatterns = config.exclude;
-        }
-      } catch { /* best-effort */ }
-    }
-
     this.watcher = new FileWatcher(
       this.projectRoot,
       async () => {
@@ -635,7 +611,7 @@ export class CodeGraph {
         const filesChanged = result.filesAdded + result.filesModified + result.filesRemoved;
         return { filesChanged, durationMs: result.durationMs };
       },
-      mergedOptions
+      options
     );
 
     return this.watcher.start();

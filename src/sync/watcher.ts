@@ -183,13 +183,6 @@ export interface WatchOptions {
    * sets it.
    */
   inertForTests?: boolean;
-
-  /**
-   * Additional glob patterns applied after .gitignore for the watcher's
-   * scope ignore matcher. Typically sourced from `.codegraph/config.json`
-   * exclude field.
-   */
-  extraIgnorePatterns?: string[];
 }
 
 /**
@@ -312,7 +305,6 @@ export class FileWatcher {
   private readonly onSyncError?: WatchOptions['onSyncError'];
   private readonly onDegraded?: WatchOptions['onDegraded'];
   private readonly inertForTests: boolean;
-  private readonly extraIgnorePatterns: string[] | undefined;
 
   constructor(
     projectRoot: string,
@@ -326,7 +318,6 @@ export class FileWatcher {
     this.onSyncError = options.onSyncError;
     this.onDegraded = options.onDegraded;
     this.inertForTests = options.inertForTests ?? false;
-    this.extraIgnorePatterns = options.extraIgnorePatterns;
   }
 
   /**
@@ -350,7 +341,7 @@ export class FileWatcher {
     }
 
     // Reuse the indexer's ignore set so the watcher and indexer agree on scope.
-    this.ignoreMatcher = buildScopeIgnore(this.projectRoot, undefined, this.extraIgnorePatterns);
+    this.ignoreMatcher = buildScopeIgnore(this.projectRoot);
 
     try {
       if (this.inertForTests) {
