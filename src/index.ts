@@ -1203,9 +1203,5 @@ export class CodeGraph {
   }
 }
 
-// Config re-exports
-export { type CodeGraphConfig } from './config';
-export { loadCodeGraphConfig } from './config';
-
 // Default export
 export default CodeGraph;
